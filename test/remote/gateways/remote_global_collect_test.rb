@@ -71,6 +71,12 @@ class RemoteGlobalCollectTest < Test::Unit::TestCase
     assert_equal 'Succeeded', response.message
   end
 
+  def test_successful_purchase_with_pre_authorization_flag
+    response = @gateway.purchase(@accepted_amount, @credit_card, @options.merge(pre_authorization: true))
+    assert_success response
+    assert_equal 'Succeeded', response.message
+  end
+
   def test_failed_purchase
     response = @gateway.purchase(@rejected_amount, @declined_card, @options)
     assert_failure response
@@ -144,6 +150,18 @@ class RemoteGlobalCollectTest < Test::Unit::TestCase
     response = @gateway.void('123')
     assert_failure response
     assert_match %r{UNKNOWN_PAYMENT_ID}, response.message
+  end
+
+  def test_failed_repeat_void
+    auth = @gateway.authorize(@amount, @credit_card, @options)
+    assert_success auth
+
+    assert void = @gateway.void(auth.authorization)
+    assert_success void
+    assert_equal 'Succeeded', void.message
+
+    assert repeat_void = @gateway.void(auth.authorization)
+    assert_failure repeat_void
   end
 
   def test_successful_verify
