@@ -402,7 +402,7 @@ class RemoteCredoraxTest < Test::Unit::TestCase
     assert_equal 'Succeeded', response.message
   end
 
-  def test_failed_credit
+  def test_failed_credit_with_zero_amount
     response = @gateway.credit(0, @declined_card, @options)
     assert_failure response
     assert_equal 'Invalid amount', response.message
