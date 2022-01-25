@@ -1,6 +1,6 @@
 job-defaults: &job-defaults
   machine: true
-  working_directory: /home/circleci/psp-gateway-api
+  working_directory: /home/circleci/active_merchant
 version: 2
 
 jobs:
