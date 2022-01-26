@@ -1197,6 +1197,11 @@ sage_pay:
 sallie_mae:
   login: TEST0
 
+# Working credentials, no need to replace
+sample:
+  some_credential: SOMECREDENTIAL
+  another_credential: ANOTHERCREDENTIAL
+
 secure_net:
   login: X
   password: Y
