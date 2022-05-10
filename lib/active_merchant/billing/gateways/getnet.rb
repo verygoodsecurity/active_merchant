@@ -15,6 +15,12 @@ module ActiveMerchant #:nodoc:
       
       STANDARD_ERROR_CODE_MAPPING = {}
 
+      ENDPOINT_MAPPING = {
+        :oauth => "/auth/oauth/v2/token",
+        :credit_payment => "/v1/payments/credit",
+        :tokenize => "/v1/tokens/card"
+      }
+
       def initialize(options = {})
         requires!(options, :username, :password)
         @username, @password = options.values_at(:username, :password)
@@ -31,7 +37,7 @@ module ActiveMerchant #:nodoc:
         add_device(post, options)
         add_credit(post, payment, options, access_token)
 
-        commit(:sale, post, access_token)
+        commit(:credit_payment, post, access_token)
       end
 
       def authorize(money, payment, options = {})
@@ -104,9 +110,6 @@ module ActiveMerchant #:nodoc:
         billing_address[:country] = address[:country] if address[:country]
         billing_address[:postal_code] = address[:zip] if address[:zip]
 
-        options[:customer_id]
-        puts "XXXXXXXXXXXXXXXXXXX"
-        puts options
         post[:customer] = {
           :customer_id => options[:customer_id],
           :billing_address => billing_address
@@ -156,18 +159,18 @@ module ActiveMerchant #:nodoc:
           success,
           message_from(success, action, response),
           response,
-          authorization: authorization_from(action, response),
+          authorization: authorization_from(success, action, response),
           avs_result: nil,
           cvv_result: nil,
           test: test?,
-          error_code: error_code_from(response)
+          error_code: error_code_from(action, response)
         )
       end
 
       def success_from(action, response)
         case action.to_s
-        when 'payment'
-          response['status'] == "APPROVED"
+        when 'credit_payment'
+          response["status"] == "APPROVED"
         else
           false
         end
@@ -175,7 +178,7 @@ module ActiveMerchant #:nodoc:
 
       def message_from(success, action, response)
         case action.to_s
-        when 'payment'
+        when 'credit_payment'
           if success
             response.dig('credit', 'reason_message')
           elsif response.dig('details', 'description')
@@ -188,14 +191,23 @@ module ActiveMerchant #:nodoc:
         end
       end
 
-      def authorization_from(response); end
+      def authorization_from(success, action, response)
+        case action.to_s
+        when 'credit_payment'
+          if success
+            response["payment_id"]
+          end
+        else
+          false
+        end
+      end
 
       def post_data(parameters = {})
         JSON.generate(parameters)
       end
 
-      def error_code_from(response)
-        unless success_from(response)
+      def error_code_from(action, response)
+        unless success_from(action, response)
           # TODO: lookup error code for this response
         end
       end
@@ -243,11 +255,6 @@ module ActiveMerchant #:nodoc:
         }
       end
       
-      ENDPOINT_MAPPING = {
-        :oauth => "/auth/oauth/v2/token",
-        :sale => "/v1/payments/credit",
-        :tokenize => "/v1/tokens/card"
-      }
       def url(action)
         endpoint = ENDPOINT_MAPPING[action]
         if test?
