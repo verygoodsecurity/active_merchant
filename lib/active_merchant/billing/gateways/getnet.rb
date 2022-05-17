@@ -1,4 +1,5 @@
 require "base64"
+require "json"
 
 module ActiveMerchant #:nodoc:
   module Billing #:nodoc:
@@ -16,9 +17,12 @@ module ActiveMerchant #:nodoc:
       STANDARD_ERROR_CODE_MAPPING = {}
 
       ENDPOINT_MAPPING = {
-        :oauth => "/auth/oauth/v2/token",
+        :authorize => "/v1/payments/credit",
         :credit_payment => "/v1/payments/credit",
-        :tokenize => "/v1/tokens/card"
+        :debit_payment => "/v1/payments/debit",
+        :oauth => "/auth/oauth/v2/token",
+        :tokenize => "/v1/tokens/card",
+        :verify => "/v1/cards/verification",
       }
 
       def initialize(options = {})
@@ -42,13 +46,15 @@ module ActiveMerchant #:nodoc:
 
       def authorize(money, payment, options = {})
         access_token = acquire_access_token
+        options[:pre_auth] = true
         post = {}
         add_invoice(post, money, options)
+        add_order(post, options)
         add_customer(post, options)
         add_device(post, options)
         add_credit(post, payment, options, access_token)
 
-        commit(:authonly, post, access_token)
+        commit(:authorize, post, access_token)
       end
 
       def capture(money, authorization, options = {})
@@ -66,12 +72,10 @@ module ActiveMerchant #:nodoc:
         commit(:void, post, access_token)
       end
 
-      def verify(credit_card, options = {})
+      def verify(creditcard, options = {})
         access_token = acquire_access_token
-        MultiResponse.run(:use_first_response) do |r|
-          r.process { authorize(100, credit_card, options) }
-          r.process(:ignore_result) { void(r.authorization, options) }
-        end
+        post = build_card(creditcard, options, access_token)
+        commit(:verify, post, access_token)
       end
 
       def supports_scrubbing?
@@ -128,11 +132,15 @@ module ActiveMerchant #:nodoc:
         credit[:delayed] = false
         credit[:dynamic_mcc] = options[:dynamic_mcc] if options[:dynamic_mcc]
         credit[:number_installments] = 1
-        credit[:pre_authorization] = false
+        credit[:pre_authorization] = options[:pre_auth]
         credit[:save_card_data] = false
         credit[:soft_descriptor] = options[:description] if options[:description]
         credit[:transaction_type] = "FULL"
+        credit[:card] = build_card(creditcard, options, access_token)
+        post[:credit] = credit
+      end
 
+      def build_card(creditcard, options, access_token)
         card = {}
         card[:cardholder_name] = creditcard.name
         card[:expiration_month] = creditcard.month.to_s.rjust(2, '0')
@@ -140,11 +148,13 @@ module ActiveMerchant #:nodoc:
         card[:number_token] = options[:token] || get_card_token(creditcard, options, access_token)
         card[:security_code] = creditcard.verification_value
 
-        credit[:card] = card
-      
-        post[:credit] = credit
+        if !creditcard.brand.nil?
+          card[:brand] = map_card_brand(creditcard.brand)
+        end
+        
+        card
       end
-
+      
       def parse(body)
         body.blank? ? {} :  JSON.parse(body)
       end
@@ -153,7 +163,11 @@ module ActiveMerchant #:nodoc:
         url = url(action)
         headers = build_api_headers(access_token)
         
-        response = parse(ssl_post(url, post_data(parameters), headers))
+        begin
+          response = parse(ssl_post(url, post_data(parameters), headers))
+        rescue ResponseError => e
+          response = parse(e.response.body)
+        end
         success = success_from(action, response)
         Response.new(
           success,
@@ -169,34 +183,58 @@ module ActiveMerchant #:nodoc:
 
       def success_from(action, response)
         case action.to_s
-        when 'credit_payment'
+        when "credit_payment"
           response["status"] == "APPROVED"
+        when "authorize"
+          response["status"] == "AUTHORIZED"
+        when "verify"
+          response["status"] == "VERIFIED"
         else
           false
         end
       end
 
+      # TODO: Write unit tests for this logic
       def message_from(success, action, response)
         case action.to_s
-        when 'credit_payment'
+        when 'credit_payment', 'authorize'
           if success
             response.dig('credit', 'reason_message')
-          elsif response.dig('details', 'description')
-            response.dig('details', 'description')
+          else
+            # Sometimes Getnet passes the error as a Hash,
+            # and sometimes they pass it as the first value in an array.
+            if (response['details'].is_a?(Hash) and 
+                response['details']['description'])
+              response['details']['description']
+            elsif (response['details'].is_a?(Array) and 
+                   response['details'].count == 1 and
+                   response['details'][0]['description'])
+              response['details'][0]['description']
+            else
+              'Failed'
+            end
+          end
+        when "verify"
+          if success
+            'Success'
           else
             'Failed'
           end
         else
-          false
+          nil
         end
       end
 
       def authorization_from(success, action, response)
+        if !success
+          false
+        end
+        
         case action.to_s
-        when 'credit_payment'
-          if success
+        when 'credit_payment', 'authorize'
             response["payment_id"]
-          end
+        when 'verify'
+          response['authorization_code']
         else
           false
         end
@@ -242,16 +280,15 @@ module ActiveMerchant #:nodoc:
         return {
           'Accept'		=> '*/*',
           'Authorization'	=> "Basic #{creds_b64}",
-          'content-type'	=> 'application/x-www-form-urlencoded'
+          'Content-Type'	=> 'application/x-www-form-urlencoded'
         }
       end
 
       def build_api_headers(access_token)
         {
           "Authorization"	=> "Bearer #{access_token}",
-          'Content-Type'	=> 'application/json',
+          'Content-Type'	=> 'application/json'
           # TODO: only if it is test
-          "api_mode"		=> "mocked"
         }
       end
       
@@ -274,6 +311,21 @@ module ActiveMerchant #:nodoc:
         address_to_parse = "#{address[:address1]} #{address[:address2]}"
         house = address[:houseNumberOrName] || address_to_parse.split(/\s+/).keep_if { |x| x =~ /\d/ }.join(' ')
         house.empty? ? 'Not Provided' : house
+      end
+
+      def map_card_brand(brand)
+        case brand.downcase
+        when 'visa'
+          'Visa'
+        when 'mastercard'
+          'MasterCard'
+        when 'americanexpress', 'amex'
+          'Amex'
+        when 'link'
+          'Link'
+        when 'hypercard'
+          'Hypercard'
+        end
       end
     end
   end
