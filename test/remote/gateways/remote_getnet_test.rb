@@ -5,8 +5,8 @@ class RemoteGetnetTest < Test::Unit::TestCase
     @gateway = GetnetGateway.new(fixtures(:getnet))
 
     @amount = 100
-    @credit_card = credit_card('4000100011112224')
-    @declined_card = credit_card('4000300011112220')
+    @credit_card = credit_card('5155901222280001')
+    @declined_card = credit_card('5155901222260003')
     @options = {
       order_id: 1,
       customer_id: '12345',
@@ -21,32 +21,34 @@ class RemoteGetnetTest < Test::Unit::TestCase
     assert_equal 'transaction approved', response.message
   end
 
-  # def test_successful_purchase_with_more_options
-  #   options = {
-  #     order_id: '1',
-  #     ip: '127.0.0.1',
-  #     email: 'joe@example.com'
-  #   }
+  def test_failed_purchase_declined_card
+    response = @gateway.purchase(5, @declined_card, @options)
+    assert_failure response
+    assert_equal 'Cartão vencido', response.message
+  end
 
-  #   response = @gateway.purchase(@amount, @credit_card, options)
-  #   assert_success response
-  #   assert_equal 'REPLACE WITH SUCCESS MESSAGE', response.message
-  # end
+  def test_failed_purchase_bad_amount
+    response = @gateway.purchase(-5, @credit_card, @options)
+    assert_failure response
+    assert_equal 'amount is invalid', response.message
+  end
 
-  # def test_failed_purchase
-  #   response = @gateway.purchase(@amount, @declined_card, @options)
-  #   assert_failure response
-  #   assert_equal 'REPLACE WITH FAILED PURCHASE MESSAGE', response.message
-  # end
+  def test_successful_authorize
+    auth = @gateway.authorize(@amount, @credit_card, @options)
+    assert_success auth
+  end
 
-  # def test_successful_authorize_and_capture
-  #   auth = @gateway.authorize(@amount, @credit_card, @options)
-  #   assert_success auth
+  def test_failed_authorize_declined_card
+    auth = @gateway.authorize(@amount, @declined_card, @options)
+    assert_failure auth
+    assert_equal 'Cartão vencido', auth.message
+  end
 
-  #   assert capture = @gateway.capture(@amount, auth.authorization)
-  #   assert_success capture
-  #   assert_equal 'REPLACE WITH SUCCESS MESSAGE', capture.message
-  # end
+  def test_successful_verify
+    response = @gateway.verify(@credit_card, @options)
+    assert_success response
+    assert_match 'Success', response.message
+  end
 
   # def test_failed_authorize
   #   response = @gateway.authorize(@amount, @declined_card, @options)
@@ -104,18 +106,6 @@ class RemoteGetnetTest < Test::Unit::TestCase
   #   response = @gateway.void('')
   #   assert_failure response
   #   assert_equal 'REPLACE WITH FAILED VOID MESSAGE', response.message
-  # end
-
-  # def test_successful_verify
-  #   response = @gateway.verify(@credit_card, @options)
-  #   assert_success response
-  #   assert_match %r{REPLACE WITH SUCCESS MESSAGE}, response.message
-  # end
-
-  # def test_failed_verify
-  #   response = @gateway.verify(@declined_card, @options)
-  #   assert_failure response
-  #   assert_match %r{REPLACE WITH FAILED PURCHASE MESSAGE}, response.message
   # end
 
   # def test_invalid_login
