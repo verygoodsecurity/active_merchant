@@ -339,7 +339,6 @@ module ActiveMerchant #:nodoc:
         {
           "Authorization"	=> "Bearer #{access_token}",
           'Content-Type'	=> 'application/json'
-          # TODO: only if it is test
         }
       end
       
