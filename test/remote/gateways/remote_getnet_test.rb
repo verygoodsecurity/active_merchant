@@ -90,7 +90,7 @@ class RemoteGetnetTest < Test::Unit::TestCase
   end
 
   def test_failed_refund
-    assert refund = @gateway.refund(@amount, "abcdefg12345")
+    assert refund = @gateway.refund(@amount, "abcdef-4fab-41bd-bafb-3be7d0bf2085")
     assert_failure refund
     assert_equal 'payment_id is invalid', refund.message
   end
@@ -116,5 +116,4 @@ class RemoteGetnetTest < Test::Unit::TestCase
     assert_failure response
     assert_equal 'payment_id is invalid', response.message
   end
-
 end

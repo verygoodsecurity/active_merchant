@@ -8,7 +8,6 @@ module ActiveMerchant #:nodoc:
       self.live_url = 'https://api.getnet.com.br'
 
       self.default_currency = 'BRL'
-      self.supported_cardtypes = %i[visa master american_express discover]
 
       self.homepage_url = 'https://developers.getnet.com.br/'
       self.display_name = 'Getnet'
@@ -22,6 +21,7 @@ module ActiveMerchant #:nodoc:
         :credit_payment => "/v1/payments/credit",
         :credit_void => "/v1/payments/credit/%s/cancel",
         :debit_payment => "/v1/payments/debit",
+        :three_d_secure_payment => "/v1/payments/authenticated",
         :debit_void => "/v1/payments/debit/%s/cancel",
         :oauth => "/auth/oauth/v2/token",
         :refund => "/v1/payments/cancel/request",
@@ -39,18 +39,26 @@ module ActiveMerchant #:nodoc:
         access_token = acquire_access_token
 
         post = {}
+
         add_invoice(post, money, options)
-        add_order(post, options)
-        add_customer(post, options)
-        add_device(post, options)
-        add_payment(post, payment, options, access_token)
-        # TODO: Add unit tests for debit payments and voids
-        if options[:debit]
-          commit(:debit_payment, post, access_token)
+
+        if options[:three_d_secure]
+          add_payment(post, payment, options, access_token)
+          add_three_d_secure(post, options)
         else
-          commit(:credit_payment, post, access_token)
+          add_customer(post, options)
+          add_device(post, options)
+          add_order(post, options)
+          
+          if options[:debit]
+            add_debit(post, payment, options, access_token)
+            commit(:debit_payment, post, access_token)
+          else
+            add_credit(post, payment, options, access_token)
+            commit(:credit_payment, post, access_token)
+          end
         end
-        
+
       end
 
       def authorize(money, payment, options = {})
@@ -61,8 +69,13 @@ module ActiveMerchant #:nodoc:
         add_order(post, options)
         add_customer(post, options)
         add_device(post, options)
-        add_payment(post, payment, options, access_token)
-        
+
+        if options[:debit]
+          add_debit(post, payment, options, access_token)
+        else
+          add_credit(post, payment, options, access_token)
+        end
+
         commit(:authorize, post, access_token)
       end
 
@@ -114,6 +127,7 @@ module ActiveMerchant #:nodoc:
       def add_order(post, options)
         order = {}
         order[:order_id] = options[:order_id].to_s if options[:order_id]
+        order[:sales_tax] = options[:sales_tax] if options[:sales_tax]
         order[:product_type] = options[:product_type] if options[:product_type]
         post[:order] = order
       end
@@ -128,7 +142,7 @@ module ActiveMerchant #:nodoc:
         billing_address[:state] = address[:state] if address[:state]
         billing_address[:country] = address[:country] if address[:country]
         billing_address[:postal_code] = address[:zip] if address[:zip]
-
+        
         post[:customer] = {
           :customer_id => options[:customer_id],
           :billing_address => billing_address
@@ -142,23 +156,35 @@ module ActiveMerchant #:nodoc:
         post[:device] = device
       end
 
-      def add_payment(post, card, options, access_token)
-        payment = {}
-        payment[:delayed] = false
-        payment[:dynamic_mcc] = options[:dynamic_mcc] if options[:dynamic_mcc]
-        payment[:number_installments] = 1
-        payment[:pre_authorization] = options[:pre_auth]
-        payment[:save_card_data] = false
-        payment[:soft_descriptor] = options[:description] if options[:description]
-        payment[:transaction_type] = "FULL"
-        payment[:card] = build_card(card, options, access_token)
+      def add_three_d_secure(post, options)
+        order[:order_id] = options[:order_id].to_s if options[:order_id]
+        post[:xid] = three_d_secure[:xid] if three_d_secure[:xid]
+        post[:ucaf] = three_d_secure[:ucaf] if three_d_secure[:ucaf]
+        post[:eci] = three_d_secure[:eci] if three_d_secure[:eci]
+        post[:tdsdsxid] = three_d_secure[:tdsdsxid] if three_d_secure[:tdsdsxid]
+        post[:tdsver] = three_d_secure[:tdsver] if three_d_secure[:tdsver]
+        payment[:payment_method] = if options[:debit] then "DEBIT" else "CREDIT" end
+      end
 
-        if options[:debit]
-          post[:debit] = payment
-        else
-          post[:credit] = payment
-        end
-          
+      def add_credit(post, card, options, access_token)
+        post[:credit] = {}
+        add_payment post[:credit], card, options, access_token
+      end
+
+      def add_debit(post, card, options, access_token)
+        post[:debit] = {}
+        add_payment post[:debit], card, options, access_token
+      end
+
+      def add_payment(parent, card, options, access_token)
+        parent[:card] = build_card card, options, access_token
+        parent[:delayed] = false
+        parent[:dynamic_mcc] = options[:dynamic_mcc] if options[:dynamic_mcc]
+        parent[:number_installments] = 1
+        parent[:pre_authorization] = options[:pre_auth]
+        parent[:save_card_data] = false
+        parent[:soft_descriptor] = options[:description] if options[:description]
+        parent[:transaction_type] = "FULL"
       end
 
       def build_card(creditcard, options, access_token)
@@ -197,8 +223,7 @@ module ActiveMerchant #:nodoc:
           authorization: authorization_from(success, action, response),
           avs_result: nil,
           cvv_result: nil,
-          test: test?,
-          error_code: error_code_from(action, response)
+          test: test?
         )
       end
 
@@ -221,7 +246,6 @@ module ActiveMerchant #:nodoc:
         end
       end
 
-      # TODO: Write unit tests for this logic
       def message_from(success, action, response)
         if success
           case action.to_s
@@ -262,7 +286,7 @@ module ActiveMerchant #:nodoc:
         end
         
         case action.to_s
-        when 'credit_payment', 'authorize'
+        when 'credit_payment', 'authorize', 'debit_payment', 'confirm'
             response["payment_id"]
         when 'refund'
           response['cancel_request_id']
@@ -275,12 +299,6 @@ module ActiveMerchant #:nodoc:
 
       def post_data(parameters = {})
         JSON.generate(parameters)
-      end
-
-      def error_code_from(action, response)
-        unless success_from(action, response)
-          # TODO: lookup error code for this response
-        end
       end
 
       def get_card_token(creditcard, options, access_token)
@@ -360,10 +378,10 @@ module ActiveMerchant #:nodoc:
           'MasterCard'
         when 'americanexpress', 'amex'
           'Amex'
-        when 'link'
-          'Link'
-        when 'hypercard'
-          'Hypercard'
+        when 'elo'
+          'Elo'
+        when 'hipercard'
+          'Hipercard'
         end
       end
     end
