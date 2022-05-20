@@ -18,9 +18,13 @@ module ActiveMerchant #:nodoc:
 
       ENDPOINT_MAPPING = {
         :authorize => "/v1/payments/credit",
+        :confirm => "/v1/payments/credit/%s/confirm",
         :credit_payment => "/v1/payments/credit",
+        :credit_void => "/v1/payments/credit/%s/cancel",
         :debit_payment => "/v1/payments/debit",
+        :debit_void => "/v1/payments/debit/%s/cancel",
         :oauth => "/auth/oauth/v2/token",
+        :refund => "/v1/payments/cancel/request",
         :tokenize => "/v1/tokens/card",
         :verify => "/v1/cards/verification",
       }
@@ -39,9 +43,14 @@ module ActiveMerchant #:nodoc:
         add_order(post, options)
         add_customer(post, options)
         add_device(post, options)
-        add_credit(post, payment, options, access_token)
-
-        commit(:credit_payment, post, access_token)
+        add_payment(post, payment, options, access_token)
+        # TODO: Add unit tests for debit payments and voids
+        if options[:debit]
+          commit(:debit_payment, post, access_token)
+        else
+          commit(:credit_payment, post, access_token)
+        end
+        
       end
 
       def authorize(money, payment, options = {})
@@ -52,24 +61,36 @@ module ActiveMerchant #:nodoc:
         add_order(post, options)
         add_customer(post, options)
         add_device(post, options)
-        add_credit(post, payment, options, access_token)
-
+        add_payment(post, payment, options, access_token)
+        
         commit(:authorize, post, access_token)
       end
 
       def capture(money, authorization, options = {})
         access_token = acquire_access_token
-        commit(:capture, post, access_token)
+        post = {}
+        post[:amount] = amount(money)
+        options[:authorization] = authorization
+        commit(:confirm, post, access_token, options)
       end
 
       def refund(money, authorization, options = {})
         access_token = acquire_access_token
+        post = {}
+        post[:cancel_amount] = amount(money)
+        post[:payment_id] = authorization
         commit(:refund, post, access_token)
       end
 
       def void(authorization, options = {})
         access_token = acquire_access_token
-        commit(:void, post, access_token)
+        options[:authorization] = authorization
+        
+        if options[:debit]
+          commit(:debit_void, nil, access_token, options)
+        else
+          commit(:credit_void, nil, access_token, options)
+        end
       end
 
       def verify(creditcard, options = {})
@@ -79,16 +100,10 @@ module ActiveMerchant #:nodoc:
       end
 
       def supports_scrubbing?
-        true
-      end
-
-      def scrub(transcript)
-        transcript
+        false
       end
 
       private
-
-      def add_address(post, creditcard, options); end
 
       def add_invoice(post, money, options)
         post[:amount] = amount(money)
@@ -127,17 +142,23 @@ module ActiveMerchant #:nodoc:
         post[:device] = device
       end
 
-      def add_credit(post, creditcard, options, access_token)
-        credit = {}
-        credit[:delayed] = false
-        credit[:dynamic_mcc] = options[:dynamic_mcc] if options[:dynamic_mcc]
-        credit[:number_installments] = 1
-        credit[:pre_authorization] = options[:pre_auth]
-        credit[:save_card_data] = false
-        credit[:soft_descriptor] = options[:description] if options[:description]
-        credit[:transaction_type] = "FULL"
-        credit[:card] = build_card(creditcard, options, access_token)
-        post[:credit] = credit
+      def add_payment(post, card, options, access_token)
+        payment = {}
+        payment[:delayed] = false
+        payment[:dynamic_mcc] = options[:dynamic_mcc] if options[:dynamic_mcc]
+        payment[:number_installments] = 1
+        payment[:pre_authorization] = options[:pre_auth]
+        payment[:save_card_data] = false
+        payment[:soft_descriptor] = options[:description] if options[:description]
+        payment[:transaction_type] = "FULL"
+        payment[:card] = build_card(card, options, access_token)
+
+        if options[:debit]
+          post[:debit] = payment
+        else
+          post[:credit] = payment
+        end
+          
       end
 
       def build_card(creditcard, options, access_token)
@@ -159,8 +180,8 @@ module ActiveMerchant #:nodoc:
         body.blank? ? {} :  JSON.parse(body)
       end
 
-      def commit(action, parameters, access_token)
-        url = url(action)
+      def commit(action, parameters, access_token, options={})
+        url = url_from(action, options)
         headers = build_api_headers(access_token)
         
         begin
@@ -183,10 +204,16 @@ module ActiveMerchant #:nodoc:
 
       def success_from(action, response)
         case action.to_s
-        when "credit_payment"
-          response["status"] == "APPROVED"
         when "authorize"
           response["status"] == "AUTHORIZED"
+        when "confirm"
+          response["status"] == "CONFIRMED"
+        when "credit_payment", "debit_payment"
+          response["status"] == "APPROVED"
+        when "credit_void", "debit_void"
+          response["status"] == "CANCELED"
+        when "refund"
+          response["status"] == "ACCEPTED"
         when "verify"
           response["status"] == "VERIFIED"
         else
@@ -196,32 +223,36 @@ module ActiveMerchant #:nodoc:
 
       # TODO: Write unit tests for this logic
       def message_from(success, action, response)
-        case action.to_s
-        when 'credit_payment', 'authorize'
-          if success
+        if success
+          case action.to_s
+          when "credit_payment", "authorize"
             response.dig('credit', 'reason_message')
+          when "confirm"
+            response.dig('credit_confirm', 'message')
+          when "credit_void"
+            response.dig('credit_cancel', 'message')
+          when "debit_void"
+            response.dig('debit_cancel', 'message')
           else
-            # Sometimes Getnet passes the error as a Hash,
-            # and sometimes they pass it as the first value in an array.
-            if (response['details'].is_a?(Hash) and 
-                response['details']['description'])
-              response['details']['description']
-            elsif (response['details'].is_a?(Array) and 
-                   response['details'].count == 1 and
-                   response['details'][0]['description'])
-              response['details'][0]['description']
-            else
-              'Failed'
-            end
-          end
-        when "verify"
-          if success
             'Success'
-          else
-            'Failed'
           end
         else
-          nil
+          find_error_message response
+        end
+      end
+
+      def find_error_message(response)
+        # Sometimes Getnet passes the error as a Hash,
+        # and sometimes they pass it as the first value in an array.
+        if (response['details'].is_a?(Hash) and 
+            response['details']['description'])
+          response['details']['description']
+        elsif (response['details'].is_a?(Array) and 
+               response['details'].count == 1 and
+               response['details'][0]['description'])
+          response['details'][0]['description']
+        else
+          'Failed'
         end
       end
 
@@ -233,10 +264,12 @@ module ActiveMerchant #:nodoc:
         case action.to_s
         when 'credit_payment', 'authorize'
             response["payment_id"]
+        when 'refund'
+          response['cancel_request_id']
         when 'verify'
           response['authorization_code']
         else
-          false
+          nil
         end
       end
 
@@ -257,7 +290,7 @@ module ActiveMerchant #:nodoc:
 
         headers = build_api_headers(access_token)
         
-        raw_response = ssl_post(url(:tokenize), post_data(parameters), headers)
+        raw_response = ssl_post(url_from(:tokenize), post_data(parameters), headers)
         response = parse(raw_response)
         response["number_token"]
       end
@@ -265,7 +298,7 @@ module ActiveMerchant #:nodoc:
       def acquire_access_token
         data = "scope=oob&grant_type=client_credentials"
         oauth_headers = build_access_token_headers
-        response = ssl_post(url(:oauth), data, oauth_headers)
+        response = ssl_post(url_from(:oauth), data, oauth_headers)
         json_response = JSON.parse(response)
         if !json_response['access_token'].nil?
           json_response['access_token']
@@ -292,8 +325,14 @@ module ActiveMerchant #:nodoc:
         }
       end
       
-      def url(action)
+      def url_from(action, options={})
         endpoint = ENDPOINT_MAPPING[action]
+
+        case action.to_s
+        when "credit_void", "debit_void", "confirm"
+          endpoint = endpoint % options[:authorization]
+        end
+        
         if test?
           "#{test_url}#{endpoint}"
         else
