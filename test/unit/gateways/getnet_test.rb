@@ -62,6 +62,104 @@ class GetnetTest < Test::Unit::TestCase
     assert response.test?
   end
 
+  def test_add_three_d_secure()
+    options = {
+      :order_id => "12345",
+      :token => "abcdefghijklmnop",
+      :three_d_secure => {
+        :xid => "XIDstringstringstringstringstringstri",
+        :ucaf => "UCAFstringstringstringstringstringstri",
+        :eci => "st",
+        :tdsdsxid => "dbdcb82d-63c5-496f-ae27-1ecfc3a8dbec",
+        :tdsver => "2.1.0"
+      }
+    }
+    post = {}
+    card_obj = @gateway.send(:add_three_d_secure, post, options)
+
+    three_d_secure = options[:three_d_secure]
+    assert_equal post[:xid], three_d_secure[:xid]
+    assert_equal post[:ucaf], three_d_secure[:ucaf]
+    assert_equal post[:eci], three_d_secure[:eci]
+    assert_equal post[:tdsdsxid], three_d_secure[:tdsdsxid]
+    assert_equal post[:tdsver], three_d_secure[:tdsver]
+    assert_equal post[:payment_method], "CREDIT"
+  end
+
+  def test_add_three_d_secure_debit()
+    options = {
+      :debit => true,
+      :order_id => "12345",
+      :token => "abcdefghijklmnop",
+      :three_d_secure => {
+        :xid => "XIDstringstringstringstringstringstri",
+        :ucaf => "UCAFstringstringstringstringstringstri",
+        :eci => "st",
+        :tdsdsxid => "dbdcb82d-63c5-496f-ae27-1ecfc3a8dbec",
+        :tdsver => "2.1.0"
+      }
+    }
+    post = {}
+    card_obj = @gateway.send(:add_three_d_secure, post, options)
+
+    three_d_secure = options[:three_d_secure]
+    assert_equal post[:xid], three_d_secure[:xid]
+    assert_equal post[:ucaf], three_d_secure[:ucaf]
+    assert_equal post[:eci], three_d_secure[:eci]
+    assert_equal post[:tdsdsxid], three_d_secure[:tdsdsxid]
+    assert_equal post[:tdsver], three_d_secure[:tdsver]
+    assert_equal post[:payment_method], "DEBIT"
+  end
+
+  def test_add_three_d_secure_missing_data()
+    options = {
+      :order_id => "12345",
+      :token => "abcdefghijklmnop",
+      :three_d_secure => {
+      }
+    }
+    post = {}
+    card_obj = @gateway.send(:add_three_d_secure, post, options)
+
+    three_d_secure = options[:three_d_secure]
+    assert_equal post[:xid], nil
+    assert_equal post[:ucaf], nil
+    assert_equal post[:eci], nil
+    assert_equal post[:tdsdsxid], nil
+    assert_equal post[:tdsver], nil
+    assert_equal post[:payment_method], "CREDIT"
+  end
+
+  def test_successful_3ds_purchase
+    # Pass in the following options:
+    options = {
+      order_id: 1,
+      three_d_secure: {
+        xid: "stringstringstringstringstringstringstri",
+        ucaf: "stringstringstringstringstringstringstri",
+        eci: "st",
+        tdsdsxid: "dbdcb82d-63c5-496f-ae27-1ecfc3a8dbec",
+        tdsver: "2.1.0"
+      },
+      token: "abcdefghijklmnop"
+    }
+
+    @gateway.expects(:ssl_post)
+      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .returns(successful_oauth_access_token)
+    
+    @gateway.expects(:ssl_post)
+      .with('https://api-sandbox.getnet.com.br/v1/payments/authenticated', anything, anything)
+      .returns(successful_purchase_response_3ds)
+
+    response = @gateway.purchase(@amount, @credit_card, options)
+    assert_success response
+
+    assert_equal '123456c8-1bbf-42bf-93b4-ce2041bfb87e', response.authorization
+    assert_equal response.message, "transaction approved"
+    assert response.test?
+  end
+
   # Ensure that if we do not pass a otken, we make a request for one and apply it to the card object correctly
   def test_build_card_obj_no_token
     @gateway.expects(:ssl_post)
@@ -193,6 +291,29 @@ class GetnetTest < Test::Unit::TestCase
     assert response.test?
   end
 
+  def test_successful_capture_3ds
+    pre_auth = 'abcdef-4fab-41bd-bafb-3be7d0bf2085'
+    @gateway.expects(:ssl_post)
+      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .returns(successful_oauth_access_token)
+    
+    @gateway.expects(:ssl_post)
+      .with("https://api-sandbox.getnet.com.br/v1/payments/authenticated/#{pre_auth}/confirm", anything, anything)
+      .returns(successful_capture_response_3ds)
+
+    options = {
+      :three_d_secure => {
+        :payment_method => "CREDIT_PRE_AUTHORIZATION"
+      }
+    }
+    response = @gateway.capture(@amount, pre_auth, options)
+
+    assert_success response
+    assert_equal 'transaction approved', response.message
+    assert_equal '12340b07-6e37-4bd9-a37b-99156cb34104', response.authorization
+    assert response.test?
+  end
+
   def test_failed_capture
     pre_auth = 'abcdef-4fab-41bd-bafb-3be7d0bf2085'
     @gateway.expects(:ssl_post)
@@ -262,6 +383,29 @@ class GetnetTest < Test::Unit::TestCase
     assert response.test?
   end
 
+  def test_successful_void_3ds
+    payment_id = "abcdef84-9113-415e-aeea-ee63fe999a90"
+    @gateway.expects(:ssl_post)
+      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .returns(successful_oauth_access_token)
+    
+    @gateway.expects(:ssl_post)
+      .with("https://api-sandbox.getnet.com.br/v1/payments/authenticated/#{payment_id}/cancel", anything, anything)
+      .returns(successful_void_response_3ds)
+
+    options = {
+      :three_d_secure => {
+        :payment_method => "CREDIT"
+      }
+    }
+
+    response = @gateway.void(payment_id, options)
+
+    assert_success response
+    assert_equal 'transaction approved 3DS TEST', response.message
+    assert response.test?
+  end
+
   def test_failed_void
     payment_id = "abcdef84-9113-415e-aeea-ee63fe999a90"
     @gateway.expects(:ssl_post)
@@ -314,7 +458,7 @@ class GetnetTest < Test::Unit::TestCase
     )
   end
 
-  def failed_purchase_response;
+  def failed_purchase_response
     %({
          "message": "Erro ao efetuar a autorização de crédito",
          "name": "CreditServiceError",
@@ -330,6 +474,34 @@ class GetnetTest < Test::Unit::TestCase
     )
   end
 
+  def successful_purchase_response_3ds
+    %({
+      "payment_id": "123456c8-1bbf-42bf-93b4-ce2041bfb87e",
+      "seller_id": "1234512c-165a-41cd-b1d9-76c575d70a28",
+      "amount": 100,
+      "currency": "BRL",
+      "order_id": "123345380-d8a3-4ccb-9138-c289182818a3",
+      "status": "APPROVED",
+      "payment_method": "string",
+      "received_at": "2017-03-19T16:30:30.764Z",
+      "transaction_id": "string",
+      "original_transaction_id": "string",
+      "authorized_at": "2017-03-19T16:30:30Z",
+      "reason_code": 0,
+      "reason_message": "transaction approved",
+      "acquirer": "GETNET",
+      "soft_descriptor": "Descrição para fatura",
+      "brand": "Mastercard",
+      "authorization_code": "6964722471672911",
+      "acquirer_transaction_id": "160453221",
+      "eci": "st",
+      "ucaf": "stringstringstringstringstringstringstri",
+      "xid": "stringstringstringstringstringstringstri",
+      "total_installment_amount": 50,
+      "first_installment_amount": 50,
+      "other_installment_amount": 50
+    })
+  end
   def successful_authorize_response
     %(
     {
@@ -416,6 +588,20 @@ class GetnetTest < Test::Unit::TestCase
     )
   end
 
+  def successful_capture_response_3ds
+    %({
+        "payment_id" : "12340b07-6e37-4bd9-a37b-99156cb34104" ,
+        "seller_id" : "12340ea0-b7d1-42f5-ad78-5a5521e3125f" ,
+        "amount" : 200000 ,
+        "currency" : "BRL" ,
+        "order_id" : "12344380-d8a3-4ccb-9138-c289182818a3" ,
+        "status" : "CONFIRMED" ,
+        "confirmed_at" : "string" ,
+        "reason_code" : 0 ,
+        "reason_message" : "transaction approved"
+    })
+  end
+
   def failed_capture_response
     %(
     {
@@ -478,6 +664,22 @@ class GetnetTest < Test::Unit::TestCase
             "canceled_at": "2022-05-20T22:19:14.535Z",
             "message": "Credit transaction cancelled sucessfully"
         }
+    }
+    )
+  end
+
+  def successful_void_response_3ds
+    %(
+    {
+        "payment_id" : "12344da1-0753-4dcf-ac92-48721d2ff553" ,
+        "seller_id" : "12340ea0-b7d1-42f5-ad78-5a5521e3125f" ,
+        "amount" : 500000 ,
+        "currency" : "BRL" ,
+        "order_id" : "12344380-d8a3-4ccb-9138-c289182818a3" ,
+        "status" : "CANCELED" ,
+        "canceled_at" : "2018-07-22T18:47:32.270Z" ,
+        "reason_code" : 0 ,
+        "reason_message" : "transaction approved 3DS TEST"
     }
     )
   end

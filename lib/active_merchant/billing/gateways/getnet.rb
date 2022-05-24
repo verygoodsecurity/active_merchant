@@ -21,7 +21,9 @@ module ActiveMerchant #:nodoc:
         :credit_payment => "/v1/payments/credit",
         :credit_void => "/v1/payments/credit/%s/cancel",
         :debit_payment => "/v1/payments/debit",
+        :three_d_secure_confirm => "/v1/payments/authenticated/%s/confirm",
         :three_d_secure_payment => "/v1/payments/authenticated",
+        :three_d_secure_void => "/v1/payments/authenticated/%s/cancel",
         :debit_void => "/v1/payments/debit/%s/cancel",
         :oauth => "/auth/oauth/v2/token",
         :refund => "/v1/payments/cancel/request",
@@ -45,6 +47,7 @@ module ActiveMerchant #:nodoc:
         if options[:three_d_secure]
           add_payment(post, payment, options, access_token)
           add_three_d_secure(post, options)
+          commit(:three_d_secure_payment, post, access_token)
         else
           add_customer(post, options)
           add_device(post, options)
@@ -83,8 +86,15 @@ module ActiveMerchant #:nodoc:
         access_token = acquire_access_token
         post = {}
         post[:amount] = amount(money)
+        # This field will be passed into the URL later in the process.
         options[:authorization] = authorization
-        commit(:confirm, post, access_token, options)
+
+        if options[:three_d_secure]
+          add_three_d_secure_capture(post, options)
+          commit(:three_d_secure_confirm, post, access_token, options)
+        else
+          commit(:confirm, post, access_token, options)
+        end
       end
 
       def refund(money, authorization, options = {})
@@ -97,9 +107,14 @@ module ActiveMerchant #:nodoc:
 
       def void(authorization, options = {})
         access_token = acquire_access_token
+        # This field will be passed into the URL later in the process.
         options[:authorization] = authorization
         
-        if options[:debit]
+        if options[:three_d_secure]
+          post = {}
+          add_three_d_secure_void(post, options)
+          commit(:three_d_secure_void, post, access_token, options)
+        elsif options[:debit]
           commit(:debit_void, nil, access_token, options)
         else
           commit(:credit_void, nil, access_token, options)
@@ -157,15 +172,28 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_three_d_secure(post, options)
-        order[:order_id] = options[:order_id].to_s if options[:order_id]
+        post[:order_id] = options[:order_id].to_s if options[:order_id]
+        post[:payment_method] = if options[:debit] then "DEBIT" else "CREDIT" end
+
+        # Add all 3D secure authentication data
+        three_d_secure = options[:three_d_secure]
         post[:xid] = three_d_secure[:xid] if three_d_secure[:xid]
         post[:ucaf] = three_d_secure[:ucaf] if three_d_secure[:ucaf]
         post[:eci] = three_d_secure[:eci] if three_d_secure[:eci]
         post[:tdsdsxid] = three_d_secure[:tdsdsxid] if three_d_secure[:tdsdsxid]
         post[:tdsver] = three_d_secure[:tdsver] if three_d_secure[:tdsver]
-        payment[:payment_method] = if options[:debit] then "DEBIT" else "CREDIT" end
       end
 
+      def add_three_d_secure_capture(post, options)
+        three_d_secure = options[:three_d_secure]
+        post[:payment_method] = three_d_secure[:payment_method] if three_d_secure[:payment_method]
+      end
+      
+      def add_three_d_secure_void(post, options)
+        three_d_secure = options[:three_d_secure]
+        post[:payment_method] = three_d_secure[:payment_method] if three_d_secure[:payment_method]
+      end
+      
       def add_credit(post, card, options, access_token)
         post[:credit] = {}
         add_payment post[:credit], card, options, access_token
@@ -231,11 +259,11 @@ module ActiveMerchant #:nodoc:
         case action.to_s
         when "authorize"
           response["status"] == "AUTHORIZED"
-        when "confirm"
+        when "confirm", "three_d_secure_confirm"
           response["status"] == "CONFIRMED"
-        when "credit_payment", "debit_payment"
+        when "credit_payment", "debit_payment", "three_d_secure_payment"
           response["status"] == "APPROVED"
-        when "credit_void", "debit_void"
+        when "credit_void", "debit_void", "three_d_secure_void"
           response["status"] == "CANCELED"
         when "refund"
           response["status"] == "ACCEPTED"
@@ -257,6 +285,8 @@ module ActiveMerchant #:nodoc:
             response.dig('credit_cancel', 'message')
           when "debit_void"
             response.dig('debit_cancel', 'message')
+          when "three_d_secure_payment", "three_d_secure_confirm", "three_d_secure_void"
+            response["reason_message"]
           else
             'Success'
           end
@@ -286,12 +316,12 @@ module ActiveMerchant #:nodoc:
         end
         
         case action.to_s
-        when 'credit_payment', 'authorize', 'debit_payment', 'confirm'
+        when "credit_payment", "authorize", "debit_payment", "confirm", "three_d_secure_payment", "three_d_secure_confirm"
             response["payment_id"]
-        when 'refund'
-          response['cancel_request_id']
-        when 'verify'
-          response['authorization_code']
+        when "refund"
+          response["cancel_request_id"]
+        when "verify"
+          response["authorization_code"]
         else
           nil
         end
@@ -345,11 +375,10 @@ module ActiveMerchant #:nodoc:
       def url_from(action, options={})
         endpoint = ENDPOINT_MAPPING[action]
 
-        case action.to_s
-        when "credit_void", "debit_void", "confirm"
+        if endpoint.include? "%s"
           endpoint = endpoint % options[:authorization]
         end
-        
+
         if test?
           "#{test_url}#{endpoint}"
         else
