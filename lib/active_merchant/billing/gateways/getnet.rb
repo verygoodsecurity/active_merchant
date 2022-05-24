@@ -174,6 +174,7 @@ module ActiveMerchant #:nodoc:
       def add_three_d_secure(post, options)
         post[:order_id] = options[:order_id].to_s if options[:order_id]
         post[:payment_method] = if options[:debit] then "DEBIT" else "CREDIT" end
+        post[:customer_id] = options[:customer_id] if options[:customer_id]
 
         # Add all 3D secure authentication data
         three_d_secure = options[:three_d_secure]
