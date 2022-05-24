@@ -2,7 +2,10 @@ require 'test_helper'
 
 class GetnetTest < Test::Unit::TestCase
   def setup
-    @gateway = GetnetGateway.new(username: 'username', password: 'password')
+    @gateway = GetnetGateway.new(
+      username: 'username',
+      password: 'password',
+      test: true)
     @credit_card = credit_card
     @amount = 100
 
