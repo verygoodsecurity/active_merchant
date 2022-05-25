@@ -33,6 +33,22 @@ class RemoteGetnetTest < Test::Unit::TestCase
     assert_equal 'amount is invalid', response.message
   end
 
+  def test_successful_purchase_3ds
+    options = @options.dup
+    options[:three_d_secure] = {
+      :eci => "st",
+      :ucaf => "1234567890123456789012345678901234567890",
+      :xid => "XIDingstringstringstringstringstringstri",
+      :tdsdsxid => "dbdcb82d-63c5-496f-ae27-1ecfc3a8dbec",
+      :tdsver => "2.1.0"
+    }
+    card = @credit_card.dup
+    card.number = "40000000000001000"
+    response = @gateway.purchase(5, card, options)
+    assert_success response
+    assert_equal 'transaction approved', response.message
+  end
+
   def test_successful_authorize
     auth = @gateway.authorize(@amount, @credit_card, @options)
     assert_success auth
