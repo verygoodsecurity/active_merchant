@@ -45,7 +45,7 @@ module ActiveMerchant #:nodoc:
         add_invoice(post, money, options)
 
         if options[:three_d_secure]
-          add_payment(post, payment, options, access_token)
+          add_card(post, payment, options, access_token)
           add_three_d_secure(post, options)
           commit(:three_d_secure_payment, post, access_token)
         else
@@ -172,6 +172,8 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_three_d_secure(post, options)
+        post[:dynamic_mcc] = options[:dynamic_mcc] if options[:dynamic_mcc]
+        post[:number_installments] = 1
         post[:order_id] = options[:order_id].to_s if options[:order_id]
         post[:payment_method] = if options[:debit] then "DEBIT" else "CREDIT" end
         post[:customer_id] = options[:customer_id] if options[:customer_id]
@@ -206,16 +208,20 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_payment(parent, card, options, access_token)
-        parent[:card] = build_card card, options, access_token
-        parent[:delayed] = false
+        add_card parent, card, options, access_token
         parent[:dynamic_mcc] = options[:dynamic_mcc] if options[:dynamic_mcc]
         parent[:number_installments] = 1
+        parent[:delayed] = false
         parent[:pre_authorization] = options[:pre_auth]
         parent[:save_card_data] = false
         parent[:soft_descriptor] = options[:description] if options[:description]
         parent[:transaction_type] = "FULL"
       end
 
+      def add_card(parent, card, options, access_token)
+        parent[:card] = build_card card, options, access_token
+      end
+      
       def build_card(creditcard, options, access_token)
         card = {}
         card[:cardholder_name] = creditcard.name
