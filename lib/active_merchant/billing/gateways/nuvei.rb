@@ -24,6 +24,7 @@ module ActiveMerchant #:nodoc:
           add_payment(post, money, payment, options)
           add_device_details(post, options)
           add_billing_address(post, options)
+          add_callback(post, options)
           commit('payment', post, options)
         end
       end
@@ -103,6 +104,18 @@ module ActiveMerchant #:nodoc:
         Digest::SHA256.hexdigest base
       end
 
+      def add_callback(post, options)
+        if !options[:callback_url].blank?
+          url_details = {
+            :successUrl => options[:callback_url],
+            :failureUrl => options[:callback_url],
+            :pendingUrl => options[:callback_url],
+            :notificationUrl => options[:callback_url]
+          }
+          post[:urlDetails] = url_details
+        end
+      end
+      
       def add_session(post, session)
         post[:sessionToken] = session['sessionToken']
       end
