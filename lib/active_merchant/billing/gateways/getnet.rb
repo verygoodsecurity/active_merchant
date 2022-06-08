@@ -409,9 +409,9 @@ module ActiveMerchant #:nodoc:
         case brand.downcase
         when 'visa'
           'Visa'
-        when 'mastercard'
-          'MasterCard'
-        when 'americanexpress', 'amex'
+        when 'master'
+          'Mastercard'
+        when 'american_express', 'amex'
           'Amex'
         when 'elo'
           'Elo'
