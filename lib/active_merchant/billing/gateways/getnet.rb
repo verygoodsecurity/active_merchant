@@ -4,7 +4,7 @@ require "json"
 module ActiveMerchant #:nodoc:
   module Billing #:nodoc:
     class GetnetGateway < Gateway
-      self.test_url = 'https://api-sandbox.getnet.com.br'
+      self.test_url = 'https://api-homologacao.getnet.com.br'
       self.live_url = 'https://api.getnet.com.br'
 
       self.default_currency = 'BRL'
@@ -39,19 +39,20 @@ module ActiveMerchant #:nodoc:
 
       def purchase(money, payment, options = {})
         access_token = acquire_access_token
+        options[:pre_auth] = false
 
         post = {}
-
         add_invoice(post, money, options)
 
+        add_order(post, options)
         if options[:three_d_secure]
           add_card(post, payment, options, access_token)
           add_three_d_secure(post, options)
           commit(:three_d_secure_payment, post, access_token)
         else
-          add_customer(post, options)
+          add_customer(post, payment, options)
+          add_shippings(post, options)
           add_device(post, options)
-          add_order(post, options)
           
           if options[:debit]
             add_debit(post, payment, options, access_token)
@@ -70,7 +71,8 @@ module ActiveMerchant #:nodoc:
         post = {}
         add_invoice(post, money, options)
         add_order(post, options)
-        add_customer(post, options)
+        add_customer(post, payment, options)
+        add_shippings(post, options)
         add_device(post, options)
 
         if options[:debit]
@@ -147,7 +149,7 @@ module ActiveMerchant #:nodoc:
         post[:order] = order
       end
 
-      def add_customer(post, options)
+      def add_customer(post, payment, options)
         address = options[:billing_address] || options[:address]
         billing_address = {}
         billing_address[:street] = parse_street(address)
@@ -157,11 +159,43 @@ module ActiveMerchant #:nodoc:
         billing_address[:state] = address[:state] if address[:state]
         billing_address[:country] = address[:country] if address[:country]
         billing_address[:postal_code] = address[:zip] if address[:zip]
+
+        customer = {}
+        customer[:billing_address] = billing_address
+        customer[:customer_id] = options[:customer_id]
+        customer[:email] = options[:email] if options[:email]
+        customer[:phone_number] = options[:phone] if options[:phone]
+        customer[:document_type] = options[:document_type] if options[:document_type] 
+        customer[:document_number] = options[:document_number] if options[:document_number]
         
-        post[:customer] = {
-          :customer_id => options[:customer_id],
-          :billing_address => billing_address
-        }
+        if !payment.name.nil?
+          customer[:name] = payment.name
+          name_split = payment.name.split(' ', 2)
+          customer[:first_name] = name_split[0]
+          customer[:last_name] = name_split[1]
+        else
+          customer[:first_name] = payment.first_name if payment.first_name
+          customer[:last_name] = payment.last_name if payment.last_name
+          customer[:name] = payment.first_name + " " + payment.last_name
+        end
+        
+        post[:customer] = customer
+      end
+
+      def add_shippings(post, options)
+        if !options[:shipping_address].nil?
+            ship_addr_data = options[:shipping_address]
+            shipping_address = {}
+            shipping_address[:street] = parse_street(ship_addr_data)
+            shipping_address[:number] = parse_house_number(ship_addr_data)
+            shipping_address[:complement] = ship_addr_data[:complement] if ship_addr_data[:complement]
+            shipping_address[:city] = ship_addr_data[:city] if ship_addr_data[:city]
+            shipping_address[:state] = ship_addr_data[:state] if ship_addr_data[:state]
+            shipping_address[:country] = ship_addr_data[:country] if ship_addr_data[:country]
+            shipping_address[:postal_code] = ship_addr_data[:zip] if ship_addr_data[:zip]
+            
+            post[:shippings] = [shipping_address]
+        end
       end
 
       def add_device(post, options)

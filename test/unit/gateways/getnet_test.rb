@@ -25,7 +25,7 @@ class GetnetTest < Test::Unit::TestCase
 
   def test_success_acquire_access_token
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
 
     response = @gateway.send(:acquire_access_token)
@@ -35,7 +35,7 @@ class GetnetTest < Test::Unit::TestCase
   
   def test_failure_acquire_access_token
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(failure_oauth_access_token)
     assert_raise Error do
       response = @gateway.send(:acquire_access_token)
@@ -44,15 +44,15 @@ class GetnetTest < Test::Unit::TestCase
 
   def test_successful_purchase
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/tokens/card', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/tokens/card', anything, anything)
       .returns(successful_get_card_token_response)
 
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/payments/credit', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/payments/credit', anything, anything)
       .returns(successful_purchase_response)
 
     response = @gateway.purchase(@amount, @credit_card, @options)
@@ -145,11 +145,11 @@ class GetnetTest < Test::Unit::TestCase
     }
 
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/payments/authenticated', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/payments/authenticated', anything, anything)
       .returns(successful_purchase_response_3ds)
 
     response = @gateway.purchase(@amount, @credit_card, options)
@@ -163,7 +163,7 @@ class GetnetTest < Test::Unit::TestCase
   # Ensure that if we do not pass a otken, we make a request for one and apply it to the card object correctly
   def test_build_card_obj_no_token
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/tokens/card', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/tokens/card', anything, anything)
       .returns(successful_get_card_token_response)
 
     card_obj = @gateway.send(:build_card, @credit_card, @options, "12345")
@@ -180,15 +180,15 @@ class GetnetTest < Test::Unit::TestCase
   
   def test_failed_purchase
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/tokens/card', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/tokens/card', anything, anything)
       .returns(successful_get_card_token_response)
 
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/payments/credit', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/payments/credit', anything, anything)
       .returns(failed_purchase_response)
 
     response = @gateway.purchase(@amount, @credit_card, @options)
@@ -198,15 +198,15 @@ class GetnetTest < Test::Unit::TestCase
 
   def test_successful_authorize
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/tokens/card', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/tokens/card', anything, anything)
       .returns(successful_get_card_token_response)
 
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/payments/credit', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/payments/credit', anything, anything)
       .returns(successful_authorize_response)
 
     response = @gateway.authorize(@amount, @credit_card, @options)
@@ -218,15 +218,15 @@ class GetnetTest < Test::Unit::TestCase
 
   def test_failed_authorize
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/tokens/card', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/tokens/card', anything, anything)
       .returns(successful_get_card_token_response)
 
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/payments/credit', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/payments/credit', anything, anything)
       .returns(failed_authorize_response)
 
     response = @gateway.authorize(@amount, @credit_card, @options)
@@ -236,15 +236,15 @@ class GetnetTest < Test::Unit::TestCase
 
   def test_successful_verify
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
  
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/tokens/card', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/tokens/card', anything, anything)
       .returns(successful_get_card_token_response)
 
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/cards/verification', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/cards/verification', anything, anything)
       .returns(successful_verify_response)
 
     response = @gateway.verify(@credit_card, @options)
@@ -256,15 +256,15 @@ class GetnetTest < Test::Unit::TestCase
 
   def test_failed_verify
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
  
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/tokens/card', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/tokens/card', anything, anything)
       .returns(successful_get_card_token_response)
 
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/v1/cards/verification', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/v1/cards/verification', anything, anything)
       .returns(failed_verify_response)
 
     response = @gateway.verify(@credit_card, @options)
@@ -276,11 +276,11 @@ class GetnetTest < Test::Unit::TestCase
   def test_successful_capture
     pre_auth = 'abcdef-4fab-41bd-bafb-3be7d0bf2085'
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with("https://api-sandbox.getnet.com.br/v1/payments/credit/#{pre_auth}/confirm", anything, anything)
+      .with("https://api-homologacao.getnet.com.br/v1/payments/credit/#{pre_auth}/confirm", anything, anything)
       .returns(successful_capture_response)
 
     response = @gateway.capture(@amount, pre_auth, @options)
@@ -294,11 +294,11 @@ class GetnetTest < Test::Unit::TestCase
   def test_successful_capture_3ds
     pre_auth = 'abcdef-4fab-41bd-bafb-3be7d0bf2085'
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with("https://api-sandbox.getnet.com.br/v1/payments/authenticated/#{pre_auth}/confirm", anything, anything)
+      .with("https://api-homologacao.getnet.com.br/v1/payments/authenticated/#{pre_auth}/confirm", anything, anything)
       .returns(successful_capture_response_3ds)
 
     options = {
@@ -317,11 +317,11 @@ class GetnetTest < Test::Unit::TestCase
   def test_failed_capture
     pre_auth = 'abcdef-4fab-41bd-bafb-3be7d0bf2085'
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with("https://api-sandbox.getnet.com.br/v1/payments/credit/#{pre_auth}/confirm", anything, anything)
+      .with("https://api-homologacao.getnet.com.br/v1/payments/credit/#{pre_auth}/confirm", anything, anything)
       .returns(failed_capture_response)
 
     response = @gateway.capture(@amount, pre_auth, @options)
@@ -334,11 +334,11 @@ class GetnetTest < Test::Unit::TestCase
   def test_successful_refund
     payment_id = 'abcdef-4fab-41bd-bafb-3be7d0bf2085'
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with("https://api-sandbox.getnet.com.br/v1/payments/cancel/request", anything, anything)
+      .with("https://api-homologacao.getnet.com.br/v1/payments/cancel/request", anything, anything)
       .returns(successful_refund_response)
 
     response = @gateway.refund(@amount, payment_id, @options)
@@ -352,11 +352,11 @@ class GetnetTest < Test::Unit::TestCase
   def test_failed_refund
     payment_id = 'abcdef-4fab-41bd-bafb-3be7d0bf2085'
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with("https://api-sandbox.getnet.com.br/v1/payments/cancel/request", anything, anything)
+      .with("https://api-homologacao.getnet.com.br/v1/payments/cancel/request", anything, anything)
       .returns(failed_refund_response)
 
     response = @gateway.refund(@amount, payment_id, @options)
@@ -369,11 +369,11 @@ class GetnetTest < Test::Unit::TestCase
   def test_successful_void
     payment_id = "abcdef84-9113-415e-aeea-ee63fe999a90"
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with("https://api-sandbox.getnet.com.br/v1/payments/credit/#{payment_id}/cancel", anything, anything)
+      .with("https://api-homologacao.getnet.com.br/v1/payments/credit/#{payment_id}/cancel", anything, anything)
       .returns(successful_void_response)
 
     response = @gateway.void(payment_id)
@@ -386,11 +386,11 @@ class GetnetTest < Test::Unit::TestCase
   def test_successful_void_3ds
     payment_id = "abcdef84-9113-415e-aeea-ee63fe999a90"
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with("https://api-sandbox.getnet.com.br/v1/payments/authenticated/#{payment_id}/cancel", anything, anything)
+      .with("https://api-homologacao.getnet.com.br/v1/payments/authenticated/#{payment_id}/cancel", anything, anything)
       .returns(successful_void_response_3ds)
 
     options = {
@@ -409,11 +409,11 @@ class GetnetTest < Test::Unit::TestCase
   def test_failed_void
     payment_id = "abcdef84-9113-415e-aeea-ee63fe999a90"
     @gateway.expects(:ssl_post)
-      .with('https://api-sandbox.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
     
     @gateway.expects(:ssl_post)
-      .with("https://api-sandbox.getnet.com.br/v1/payments/credit/#{payment_id}/cancel", anything, anything)
+      .with("https://api-homologacao.getnet.com.br/v1/payments/credit/#{payment_id}/cancel", anything, anything)
       .returns(failed_void_response)
 
     response = @gateway.void(payment_id)
