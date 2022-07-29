@@ -4,27 +4,40 @@ class RemoteGetnetTest < Test::Unit::TestCase
   def setup
     @gateway = GetnetGateway.new(fixtures(:getnet))
 
+    addr = address
+    addr[:zip] = '90230060'
+    addr[:country] = 'Brasil'
+    addr[:city] = 'Porto Alegre'
+    addr[:state] = 'RS'
+    addr[:address1] = '1000 Av. Brasil Room'
     @amount = 100
-    @credit_card = credit_card('5155901222280001')
+    card = credit_card('4012001037141112', {:name => 'JOAO DA SILVA', :month => 01, :year => 25, :verification_value => '006'})
+    @credit_card = card
     @declined_card = credit_card('5155901222260003')
     @options = {
       order_id: 1,
       customer_id: '12345',
-      billing_address: address,
-      description: 'Store Purchase'
+      billing_address: addr,
+      description: 'Store Purchase',
+      device_id: '12345610500',
+      ip: '127.0.0.1',
+      email: 'aceitei@getnet.com.br',
     }
   end
 
   def test_successful_purchase
+    puts "test"
     response = @gateway.purchase(@amount, @credit_card, @options)
     assert_success response
     assert_equal 'transaction approved', response.message
   end
 
   def test_failed_purchase_declined_card
-    response = @gateway.purchase(5, @declined_card, @options)
+    options = @options.dup
+    options[:email] = 'recusada@getnet.com.br'
+    response = @gateway.purchase(5, @declined_card, options)
     assert_failure response
-    assert_equal 'Cartão vencido', response.message
+    assert_equal 'Failed', response.message
   end
 
   def test_failed_purchase_bad_amount
@@ -33,21 +46,21 @@ class RemoteGetnetTest < Test::Unit::TestCase
     assert_equal 'amount is invalid', response.message
   end
 
-  def test_successful_purchase_3ds
-    options = @options.dup
-    options[:three_d_secure] = {
-      :eci => "st",
-      :ucaf => "1234567890123456789012345678901234567890",
-      :xid => "XIDingstringstringstringstringstringstri",
-      :tdsdsxid => "dbdcb82d-63c5-496f-ae27-1ecfc3a8dbec",
-      :tdsver => "2.1.0"
-    }
-    card = @credit_card.dup
-    card.number = "40000000000001000"
-    response = @gateway.purchase(5, card, options)
-    assert_success response
-    assert_equal 'transaction approved', response.message
-  end
+  ## def test_successful_purchase_3ds
+  ##   options = @options.dup
+  ##   options[:three_d_secure] = {
+  ##     :eci => "st",
+  ##     :ucaf => "1234567890123456789012345678901234567890",
+  ##     :xid => "XIDingstringstringstringstringstringstri",
+  ##     :tdsdsxid => "dbdcb82d-63c5-496f-ae27-1ecfc3a8dbec",
+  ##     :tdsver => "2.1.0"
+  ##   }
+  ##   card = @credit_card.dup
+  ##   card.number = "40000000000001000"
+  ##   response = @gateway.purchase(@amount, card, options)
+  ##   assert_success response
+  ##   assert_equal 'transaction approved', response.message
+  ## end
 
   def test_successful_authorize
     auth = @gateway.authorize(@amount, @credit_card, @options)
@@ -85,7 +98,7 @@ class RemoteGetnetTest < Test::Unit::TestCase
   def test_failed_capture
     response = @gateway.capture(@amount, "abcdefg12345")
     assert_failure response
-    assert_equal 'payment_id is invalid', response.message
+    assert_equal 'Not Found', response.message
   end
 
   def test_failed_capture_over_amount
