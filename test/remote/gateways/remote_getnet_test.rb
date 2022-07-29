@@ -26,7 +26,6 @@ class RemoteGetnetTest < Test::Unit::TestCase
   end
 
   def test_successful_purchase
-    puts "test"
     response = @gateway.purchase(@amount, @credit_card, @options)
     assert_success response
     assert_equal 'transaction approved', response.message
