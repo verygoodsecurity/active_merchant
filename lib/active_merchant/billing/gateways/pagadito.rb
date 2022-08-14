@@ -1,3 +1,5 @@
+require "json"
+
 module ActiveMerchant #:nodoc:
   module Billing #:nodoc:
     class PagaditoGateway < Gateway
@@ -14,25 +16,9 @@ module ActiveMerchant #:nodoc:
         super
       end
 
-      def purchase(money, payment, options = {})
-        # MultiResponse.run() do |r|
-        #   r.process {  }
-        # end
-        # post = {}
-        
-        # add_card(post, payment, options)
-        
-        # commit('payment', post)
-
-        tokenize(money, payment, options)
-        charge(money, payment, options)
-      end
-
-      private
-
-      def tokenize(amount, creditcard, options)
+      def purchase(amount, creditcard, options)
         action = 'customer'
-        
+
         post = {}
         add_card(post, options, creditcard)
         add_transaction(post, options, amount)
@@ -41,18 +27,7 @@ module ActiveMerchant #:nodoc:
         commit(action, post)
       end
 
-      def charge(amount, authorization, options)
-        action = 'charge'
-
-        post = {}
-        add_reference(post, authorization, options)
-        add_invoice(action, post, amount, options)
-        add_contact_details(post, options[:contact_details]) if options[:contact_details]
-        add_full_response(post, options)
-        add_metadata(post, options)
-
-        commit(action, post)
-      end
+      private
 
       def add_card(post, options, creditcard)
         card = {}
@@ -127,19 +102,20 @@ module ActiveMerchant #:nodoc:
         url = (test? ? test_url : live_url) + action
 
         headers = build_headers
-        puts "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-        puts headers
-        response = parse(ssl_post(url, post_data(parameters), headers))
-
+        begin
+          request = ssl_post(url, post_data(parameters), headers)
+          response = parse(request)
+        rescue ActiveMerchant::ResponseError => error
+          response = parse(error.response.body)
+        end
+        
         Response.new(
-          success_from(response),
-          message_from(response),
+          success_from(action, response),
+          message_from(action, response),
           response,
-          authorization: authorization_from(response),
-          avs_result: AVSResult.new(code: response['some_avs_response_key']),
-          cvv_result: CVVResult.new(response['some_cvv_response_key']),
+          authorization: authorization_from(action, response),
           test: test?,
-          error_code: error_code_from(response)
+          error_code: error_code_from(action, response)
         )
       end
 
@@ -147,18 +123,34 @@ module ActiveMerchant #:nodoc:
         body.blank? ? {} :  JSON.parse(body)
       end
 
-      def success_from(response); end
+      def success_from(action, response)
+        case action
+        when "customer"
+          response.dig("response_code") == "PG200-00"
+        else
+          false
+        end
+      end
 
-      def message_from(response); end
+      def message_from(action, response)
+        case action
+        when "customer"
+          response['response_message']
+        end
+      end
 
-      def authorization_from(response); end
+      def authorization_from(action, response)
+        case action
+        when "customer"
+          response.dig('customer_reply', 'payment_token')
+        end
+      end
 
       def build_headers
         auth_str = @username + ":" + @wsk
         creds_b64 = Base64.strict_encode64(auth_str)
         return {
           'Authorization'	=> "Basic #{creds_b64}",
-          # 'Authorization'	=> "Basic #{auth_str}",
           'Content-Type'	=> 'application/json'
         }
       end
@@ -167,9 +159,9 @@ module ActiveMerchant #:nodoc:
         JSON.generate(parameters)
       end
 
-      def error_code_from(response)
-        unless success_from(response)
-          # TODO: lookup error code for this response
+      def error_code_from(action, response)
+        unless success_from(action, response)
+          response.dig('response_code') || 'Failed'
         end
       end
     end
