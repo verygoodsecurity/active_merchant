@@ -142,7 +142,7 @@ module ActiveMerchant #:nodoc:
       def authorization_from(action, response)
         case action
         when "customer"
-          response.dig('customer_reply', 'payment_token')
+          response.dig('customer_reply', 'authorization')
         end
       end
 

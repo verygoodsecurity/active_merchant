@@ -2,14 +2,18 @@ require 'test_helper'
 
 class PagaditoTest < Test::Unit::TestCase
   def setup
-    @gateway = PagaditoGateway.new(some_credential: 'login', another_credential: 'password')
+    @gateway = PagaditoGateway.new(username: 'username', wsk: 'password')
     @credit_card = credit_card
     @amount = 100
 
     @options = {
-      order_id: '1',
       billing_address: address,
-      description: 'Store Purchase'
+      description: 'Store Purchase',
+      order_id: 1,
+      email: 'test@test.com',
+      ip: '50.93.92.185',
+      device_id: '12345',
+      currency: 'USD',
     }
   end
 
@@ -19,7 +23,7 @@ class PagaditoTest < Test::Unit::TestCase
     response = @gateway.purchase(@amount, @credit_card, @options)
     assert_success response
 
-    assert_equal 'REPLACE', response.authorization
+    assert_equal '1C917C4D', response.authorization
     assert response.test?
   end
 
@@ -28,80 +32,37 @@ class PagaditoTest < Test::Unit::TestCase
 
     response = @gateway.purchase(@amount, @credit_card, @options)
     assert_failure response
-    assert_equal Gateway::STANDARD_ERROR_CODE[:card_declined], response.error_code
-  end
-
-  def test_successful_authorize; end
-
-  def test_failed_authorize; end
-
-  def test_successful_capture; end
-
-  def test_failed_capture; end
-
-  def test_successful_refund; end
-
-  def test_failed_refund; end
-
-  def test_successful_void; end
-
-  def test_failed_void; end
-
-  def test_successful_verify; end
-
-  def test_successful_verify_with_failed_void; end
-
-  def test_failed_verify; end
-
-  def test_scrub
-    assert @gateway.supports_scrubbing?
-    assert_equal @gateway.scrub(pre_scrubbed), post_scrubbed
   end
 
   private
 
-  def pre_scrubbed
-    '
-      Run the remote tests for this gateway, and then put the contents of transcript.log here.
-    '
-  end
-
-  def post_scrubbed
-    '
-      Put the scrubbed contents of transcript.log here after implementing your scrubbing function.
-      Things to scrub:
-        - Credit card number
-        - CVV
-        - Sensitive authentication details
-    '
-  end
-
   def successful_purchase_response
     %(
-      Easy to capture by setting the DEBUG_ACTIVE_MERCHANT environment variable
-      to "true" when running remote tests:
-
-      $ DEBUG_ACTIVE_MERCHANT=true ruby -Itest \
-        test/remote/gateways/remote_pagadito_test.rb \
-        -n test_successful_purchase
+      {
+        "response_code": "PG200-00",
+        "response_message": "Operation successful",
+        "request_id": "4bcfc84b4add786f2689d98844107cf0",
+        "customer_reply": {
+            "payment_token": "cus_4aaa23c6e7cf1fad",
+            "authorization": "1C917C4D",
+            "merchantTransactionId": "1",
+            "totalAmount": "100.00",
+            "firstName": "Longbob",
+            "lastName": "Longsen",
+            "paymentDate": "2022-08-14T20:45:40-06:00"
+        },
+        "request_date": "2022-08-14T20:45:43-06:00"
+      }
     )
   end
 
-  def failed_purchase_response; end
-
-  def successful_authorize_response; end
-
-  def failed_authorize_response; end
-
-  def successful_capture_response; end
-
-  def failed_capture_response; end
-
-  def successful_refund_response; end
-
-  def failed_refund_response; end
-
-  def successful_void_response; end
-
-  def failed_void_response; end
+  def failed_purchase_response
+    %(
+      {
+        "response_code": "PG400-07",
+        "response_message": "Currency not supported for Pagadito.",
+        "request_date": "2022-08-14T20:45:37-06:00"
+      }
+    )
+  end
 end
