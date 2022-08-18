@@ -292,7 +292,7 @@ module ActiveMerchant #:nodoc:
           authorization: authorization_from(success, action, response),
           avs_result: nil,
           cvv_result: nil,
-          test: test?
+          test: is_test(options)
         )
       end
 
@@ -420,7 +420,7 @@ module ActiveMerchant #:nodoc:
           endpoint = endpoint % options[:authorization]
         end
 
-        if test?
+        if is_test(options)
           "#{test_url}#{endpoint}"
         else
           "#{live_url}#{endpoint}"
@@ -452,6 +452,10 @@ module ActiveMerchant #:nodoc:
         when 'hipercard'
           'Hipercard'
         end
+      end
+      
+      def is_test(options)
+        test? || options[:test_mode].to_s.upcase == 'TRUE'
       end
     end
   end
