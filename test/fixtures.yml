@@ -698,6 +698,10 @@ orbital_gateway:
   password: PASSWORD
   merchant_id: MERCHANTID
 
+pagadito:
+  username: USERNAME
+  wsk: WSK
+
 # Working credentials, no need to replace
 pagarme:
     api_key: 'ak_test_e1QGU2gL98MDCHZxHLJ9sofPUFJ7tH'
