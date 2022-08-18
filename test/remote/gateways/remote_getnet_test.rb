@@ -11,7 +11,7 @@ class RemoteGetnetTest < Test::Unit::TestCase
     addr[:state] = 'RS'
     addr[:address1] = '1000 Av. Brasil Room'
     @amount = 100
-    card = credit_card('4012001037141112', {:name => 'JOAO DA SILVA', :month => 01, :year => 25, :verification_value => '006'})
+    card = credit_card('5155901222280001', {:name => 'JOAO DA SILVA', :month => 01, :year => 25, :verification_value => '123', :brand => 'mastercard'})
     @credit_card = card
     @declined_card = credit_card('5155901222260003')
     @options = {
