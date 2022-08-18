@@ -16,6 +16,46 @@ class GetnetTest < Test::Unit::TestCase
     }
   end
 
+  def test_is_test_true_with_test_mode_true
+    @gateway.expects(:test?)
+      .returns(false)
+    response = @gateway.send(:is_test, {:test_mode => true})
+    assert response
+  end
+
+  def test_is_test_false_with_test_mode_false
+    @gateway.expects(:test?)
+      .returns(false)
+    response = @gateway.send(:is_test, {:test_mode => false})
+    assert !response
+  end
+
+  def test_is_test_true_with_global_test_true
+    @gateway.expects(:test?)
+      .returns(true)
+    response = @gateway.send(:is_test, {:test_mode => false})
+    assert response
+  end
+
+  def test_is_test_false_with_both_false
+    @gateway.expects(:test?)
+      .returns(false)
+    response = @gateway.send(:is_test, {:test_mode => false})
+    assert !response
+  end
+
+  def test_is_test_works_with_missing_option
+    @gateway.expects(:test?)
+      .returns(true)
+    response = @gateway.send(:is_test, {})
+    assert response
+
+    @gateway.expects(:test?)
+      .returns(false)
+    response = @gateway.send(:is_test, {})
+    assert !response
+  end
+
   def test_build_access_token_headers
     response = @gateway.send(:build_access_token_headers)
     auth = response['Authorization']
