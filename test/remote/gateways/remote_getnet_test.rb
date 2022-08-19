@@ -31,6 +31,15 @@ class RemoteGetnetTest < Test::Unit::TestCase
     assert_equal 'transaction approved', response.message
   end
 
+  def test_successful_purchase_test_mode_option
+    @gateway.expects(:test?).at_least_once.returns(false)
+    ops = @options
+    ops[:test_mode] = true
+    response = @gateway.purchase(@amount, @credit_card, @options)
+    assert_success response
+    assert_equal 'transaction approved', response.message
+  end
+
   def test_failed_purchase_declined_card
     options = @options.dup
     options[:email] = 'recusada@getnet.com.br'
