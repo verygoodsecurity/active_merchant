@@ -38,7 +38,7 @@ module ActiveMerchant #:nodoc:
       end
 
       def purchase(money, payment, options = {})
-        access_token = acquire_access_token
+        access_token = acquire_access_token(options)
         options[:pre_auth] = false
 
         post = {}
@@ -48,7 +48,7 @@ module ActiveMerchant #:nodoc:
         if options[:three_d_secure]
           add_card(post, payment, options, access_token)
           add_three_d_secure(post, options)
-          commit(:three_d_secure_payment, post, access_token)
+          commit(:three_d_secure_payment, post, access_token, options)
         else
           add_customer(post, payment, options)
           add_shippings(post, options)
@@ -56,17 +56,17 @@ module ActiveMerchant #:nodoc:
           
           if options[:debit]
             add_debit(post, payment, options, access_token)
-            commit(:debit_payment, post, access_token)
+            commit(:debit_payment, post, access_token, options)
           else
             add_credit(post, payment, options, access_token)
-            commit(:credit_payment, post, access_token)
+            commit(:credit_payment, post, access_token, options)
           end
         end
 
       end
 
       def authorize(money, payment, options = {})
-        access_token = acquire_access_token
+        access_token = acquire_access_token(options)
         options[:pre_auth] = true
         post = {}
         add_invoice(post, money, options)
@@ -81,11 +81,11 @@ module ActiveMerchant #:nodoc:
           add_credit(post, payment, options, access_token)
         end
 
-        commit(:authorize, post, access_token)
+        commit(:authorize, post, access_token, options)
       end
 
       def capture(money, authorization, options = {})
-        access_token = acquire_access_token
+        access_token = acquire_access_token(options)
         post = {}
         post[:amount] = amount(money)
         # This field will be passed into the URL later in the process.
@@ -100,15 +100,15 @@ module ActiveMerchant #:nodoc:
       end
 
       def refund(money, authorization, options = {})
-        access_token = acquire_access_token
+        access_token = acquire_access_token(options)
         post = {}
         post[:cancel_amount] = amount(money)
         post[:payment_id] = authorization
-        commit(:refund, post, access_token)
+        commit(:refund, post, access_token, options)
       end
 
       def void(authorization, options = {})
-        access_token = acquire_access_token
+        access_token = acquire_access_token(options)
         # This field will be passed into the URL later in the process.
         options[:authorization] = authorization
         
@@ -124,9 +124,9 @@ module ActiveMerchant #:nodoc:
       end
 
       def verify(creditcard, options = {})
-        access_token = acquire_access_token
+        access_token = acquire_access_token(options)
         post = build_card(creditcard, options, access_token)
-        commit(:verify, post, access_token)
+        commit(:verify, post, access_token, options)
       end
 
       def supports_scrubbing?
@@ -275,10 +275,9 @@ module ActiveMerchant #:nodoc:
         body.blank? ? {} :  JSON.parse(body)
       end
 
-      def commit(action, parameters, access_token, options={})
+      def commit(action, parameters, access_token, options)
         url = url_from(action, options)
         headers = build_api_headers(access_token)
-        
         begin
           response = parse(ssl_post(url, post_data(parameters), headers))
         rescue ResponseError => e
@@ -379,15 +378,15 @@ module ActiveMerchant #:nodoc:
 
         headers = build_api_headers(access_token)
         
-        raw_response = ssl_post(url_from(:tokenize), post_data(parameters), headers)
+        raw_response = ssl_post(url_from(:tokenize, options), post_data(parameters), headers)
         response = parse(raw_response)
         response["number_token"]
       end
       
-      def acquire_access_token
+      def acquire_access_token(options)
         data = "scope=oob&grant_type=client_credentials"
         oauth_headers = build_access_token_headers
-        response = ssl_post(url_from(:oauth), data, oauth_headers)
+        response = ssl_post(url_from(:oauth, options), data, oauth_headers)
         json_response = JSON.parse(response)
         if !json_response['access_token'].nil?
           json_response['access_token']
@@ -413,7 +412,7 @@ module ActiveMerchant #:nodoc:
         }
       end
       
-      def url_from(action, options={})
+      def url_from(action, options)
         endpoint = ENDPOINT_MAPPING[action]
 
         if endpoint.include? "%s"

@@ -39,7 +39,7 @@ class GetnetTest < Test::Unit::TestCase
 
   def test_is_test_false_with_both_false
     @gateway.expects(:test?)
-      .returns(false)
+    .returns(false)
     response = @gateway.send(:is_test, {:test_mode => false})
     assert !response
   end
@@ -68,7 +68,19 @@ class GetnetTest < Test::Unit::TestCase
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
 
-    response = @gateway.send(:acquire_access_token)
+    response = @gateway.send(:acquire_access_token, {})
+    
+    assert_equal response, "abc12345-6c4d-4d92-9f3f-81385966693f"
+  end
+
+  def test_success_acquire_access_token_with_test_mode_option
+    @gateway.expects(:test?)
+      .returns(true)
+    @gateway.expects(:ssl_post)
+      .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
+      .returns(successful_oauth_access_token)
+
+    response = @gateway.send(:acquire_access_token, {:test_mode => true})
     
     assert_equal response, "abc12345-6c4d-4d92-9f3f-81385966693f"
   end
@@ -78,11 +90,11 @@ class GetnetTest < Test::Unit::TestCase
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(failure_oauth_access_token)
     assert_raise Error do
-      response = @gateway.send(:acquire_access_token)
+      response = @gateway.send(:acquire_access_token, {})
     end
   end
 
-  def test_successful_purchase
+  def test_successful_purchase(options=nil)
     @gateway.expects(:ssl_post)
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
@@ -95,11 +107,18 @@ class GetnetTest < Test::Unit::TestCase
       .with('https://api-homologacao.getnet.com.br/v1/payments/credit', anything, anything)
       .returns(successful_purchase_response)
 
-    response = @gateway.purchase(@amount, @credit_card, @options)
+    response = @gateway.purchase(@amount, @credit_card, options || @options)
     assert_success response
 
     assert_equal '0533533f-0e8d-4478-af9f-39ce0d388443', response.authorization
     assert response.test?
+  end
+
+  def test_successful_purchase_with_test_mode_option
+    @gateway.expects(:test?).at_least_once.returns(false)
+    ops = @options.dup
+    ops[:test_mode] = true
+    test_successful_purchase(ops)
   end
 
   def test_add_three_d_secure()
@@ -170,7 +189,7 @@ class GetnetTest < Test::Unit::TestCase
     assert_equal post[:payment_method], "CREDIT"
   end
 
-  def test_successful_3ds_purchase
+  def test_successful_3ds_purchase(ops=nil)
     # Pass in the following options:
     options = {
       order_id: 1,
@@ -183,6 +202,10 @@ class GetnetTest < Test::Unit::TestCase
       },
       token: "abcdefghijklmnop"
     }
+
+    if ops
+      options = options.merge(ops)
+    end
 
     @gateway.expects(:ssl_post)
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
@@ -198,6 +221,13 @@ class GetnetTest < Test::Unit::TestCase
     assert_equal '123456c8-1bbf-42bf-93b4-ce2041bfb87e', response.authorization
     assert_equal response.message, "transaction approved"
     assert response.test?
+  end
+
+  def test_successful_3ds_purchase_with_test_mode_option
+    @gateway.expects(:test?).at_least_once.returns(false)
+    ops = @options.dup
+    ops[:test_mode] = true
+    test_successful_3ds_purchase(ops)
   end
 
   # Ensure that if we do not pass a otken, we make a request for one and apply it to the card object correctly
@@ -236,7 +266,7 @@ class GetnetTest < Test::Unit::TestCase
     assert_equal response.message, "Cartão vencido"
   end
 
-  def test_successful_authorize
+  def test_successful_authorize(options=nil)
     @gateway.expects(:ssl_post)
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
@@ -249,11 +279,18 @@ class GetnetTest < Test::Unit::TestCase
       .with('https://api-homologacao.getnet.com.br/v1/payments/credit', anything, anything)
       .returns(successful_authorize_response)
 
-    response = @gateway.authorize(@amount, @credit_card, @options)
+    response = @gateway.authorize(@amount, @credit_card, options || @options)
     assert_success response
 
     assert_equal 'abcdef-4fab-41bd-bafb-3be7d0bf2085', response.authorization
     assert response.test?
+  end
+
+  def test_successful_authorize_with_test_mode_option
+    @gateway.expects(:test?).at_least_once.returns(false)
+    ops = @options.dup
+    ops[:test_mode] = true
+    test_successful_authorize(ops)
   end
 
   def test_failed_authorize
@@ -294,7 +331,7 @@ class GetnetTest < Test::Unit::TestCase
     assert response.test?
   end
 
-  def test_failed_verify
+  def test_failed_verify(options = nil)
     @gateway.expects(:ssl_post)
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
       .returns(successful_oauth_access_token)
@@ -307,10 +344,17 @@ class GetnetTest < Test::Unit::TestCase
       .with('https://api-homologacao.getnet.com.br/v1/cards/verification', anything, anything)
       .returns(failed_verify_response)
 
-    response = @gateway.verify(@credit_card, @options)
+    response = @gateway.verify(@credit_card, options || @options)
     assert_failure response
     assert_equal response.message, "Error message"
     assert response.test?
+  end
+
+  def test_failed_verify_with_test_mode_option
+    @gateway.expects(:test?).at_least_once.returns(false)
+    ops = @options.dup
+    ops[:test_mode] = true
+    test_failed_verify(ops)
   end
 
   def test_successful_capture
@@ -331,7 +375,7 @@ class GetnetTest < Test::Unit::TestCase
     assert response.test?
   end
 
-  def test_successful_capture_3ds
+  def test_successful_capture_3ds(ops=nil)
     pre_auth = 'abcdef-4fab-41bd-bafb-3be7d0bf2085'
     @gateway.expects(:ssl_post)
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
@@ -346,12 +390,23 @@ class GetnetTest < Test::Unit::TestCase
         :payment_method => "CREDIT_PRE_AUTHORIZATION"
       }
     }
+    if ops
+      options = options.merge(ops)
+    end
     response = @gateway.capture(@amount, pre_auth, options)
 
     assert_success response
     assert_equal 'transaction approved', response.message
     assert_equal '12340b07-6e37-4bd9-a37b-99156cb34104', response.authorization
     assert response.test?
+  end
+
+  def test_successful_capture_3ds_with_test_mode_option
+    @gateway.expects(:test?).at_least_once.returns(false)
+    ops = {
+      :test_mode => true
+    }
+    test_successful_capture_3ds(ops)
   end
 
   def test_failed_capture
@@ -371,7 +426,7 @@ class GetnetTest < Test::Unit::TestCase
     assert response.test?
   end
 
-  def test_successful_refund
+  def test_successful_refund(options=nil)
     payment_id = 'abcdef-4fab-41bd-bafb-3be7d0bf2085'
     @gateway.expects(:ssl_post)
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
@@ -381,12 +436,19 @@ class GetnetTest < Test::Unit::TestCase
       .with("https://api-homologacao.getnet.com.br/v1/payments/cancel/request", anything, anything)
       .returns(successful_refund_response)
 
-    response = @gateway.refund(@amount, payment_id, @options)
+    response = @gateway.refund(@amount, payment_id, options || @options)
 
     assert_success response
     assert_equal 'Success', response.message
     assert_equal '123468385637229683', response.authorization
     assert response.test?
+  end
+
+  def test_successful_refund_with_test_mode_option
+    @gateway.expects(:test?).at_least_once.returns(false)
+    ops = @options.dup
+    ops[:test_mode] = true
+    test_successful_refund(ops)
   end
 
   def test_failed_refund
@@ -406,7 +468,7 @@ class GetnetTest < Test::Unit::TestCase
     assert response.test?
   end
 
-  def test_successful_void
+  def test_successful_void(options = {})
     payment_id = "abcdef84-9113-415e-aeea-ee63fe999a90"
     @gateway.expects(:ssl_post)
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
@@ -416,14 +478,21 @@ class GetnetTest < Test::Unit::TestCase
       .with("https://api-homologacao.getnet.com.br/v1/payments/credit/#{payment_id}/cancel", anything, anything)
       .returns(successful_void_response)
 
-    response = @gateway.void(payment_id)
+    response = @gateway.void(payment_id, options)
 
     assert_success response
     assert_equal 'Credit transaction cancelled sucessfully', response.message
     assert response.test?
   end
 
-  def test_successful_void_3ds
+  def test_successful_void_with_test_mode_option
+    @gateway.expects(:test?).at_least_once.returns(false)
+    ops = @options.dup
+    ops[:test_mode] = true
+    test_successful_void(ops)
+  end
+
+  def test_successful_void_3ds(ops=nil)
     payment_id = "abcdef84-9113-415e-aeea-ee63fe999a90"
     @gateway.expects(:ssl_post)
       .with('https://api-homologacao.getnet.com.br/auth/oauth/v2/token', anything, anything)
@@ -439,11 +508,22 @@ class GetnetTest < Test::Unit::TestCase
       }
     }
 
+    if ops
+      options = options.merge(ops)
+    end
+
     response = @gateway.void(payment_id, options)
 
     assert_success response
     assert_equal 'transaction approved 3DS TEST', response.message
     assert response.test?
+  end
+
+  def test_successful_void_3ds_with_test_mode_option
+    @gateway.expects(:test?).at_least_once.returns(false)
+    ops = @options.dup
+    ops[:test_mode] = true
+    test_successful_void(ops)
   end
 
   def test_failed_void
