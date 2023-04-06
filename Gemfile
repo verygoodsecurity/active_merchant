@@ -9,5 +9,6 @@ group :test, :remote_test do
   gem 'braintree', '>= 3.0.0', '<= 3.0.1'
   gem 'jose', '~> 1.1.3'
   gem 'jwe'
-  gem 'mechanize'
+  gem 'mechanize', '>= 2.8.5'
+  gem 'tzinfo-data'
 end
