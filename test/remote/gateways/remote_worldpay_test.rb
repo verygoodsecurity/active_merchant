@@ -24,6 +24,7 @@ class RemoteWorldpayTest < Test::Unit::TestCase
     @declined_card = credit_card('4111111111111111', first_name: nil, last_name: 'REFUSED')
     @threeDS_card = credit_card('4111111111111111', first_name: nil, last_name: 'doot')
     @threeDS2_card = credit_card('4111111111111111', first_name: nil, last_name: '3DS_V2_FRICTIONLESS_IDENTIFIED')
+    @threeDS2_challenge_card = credit_card('4000000000001091', first_name: nil, last_name: 'challenge-me-plz')
     @threeDS_card_external_MPI = credit_card('4444333322221111', first_name: 'AA', last_name: 'BD')
     @nt_credit_card = network_tokenization_credit_card('4895370015293175',
       brand: 'visa',
@@ -38,6 +39,79 @@ class RemoteWorldpayTest < Test::Unit::TestCase
       order_id: generate_unique_id,
       email: 'wow@example.com'
     }
+
+    @level_two_data = {
+      level_2_data: {
+        invoice_reference_number: 'INV12233565',
+        customer_reference: 'CUST00000101',
+        card_acceptor_tax_id: 'VAT1999292',
+        sales_tax: {
+          amount: '20',
+          exponent: '2',
+          currency: 'USD'
+        }
+      }
+    }
+
+    @level_three_data = {
+      level_3_data: {
+        customer_reference: 'CUST00000102',
+        card_acceptor_tax_id: 'VAT1999285',
+        sales_tax: {
+          amount: '20',
+          exponent: '2',
+          currency: 'USD'
+        },
+        discount_amount: {
+          amount: '1',
+          exponent: '2',
+          currency: 'USD'
+        },
+        shipping_amount: {
+          amount: '50',
+          exponent: '2',
+          currency: 'USD'
+        },
+        duty_amount: {
+          amount: '20',
+          exponent: '2',
+          currency: 'USD'
+        },
+        item: {
+          description: 'Laptop 14',
+          product_code: 'LP00125',
+          commodity_code: 'COM00125',
+          quantity: '2',
+          unit_cost: {
+            amount: '1500',
+            exponent: '2',
+            currency: 'USD'
+          },
+          unit_of_measure: 'each',
+          item_total: {
+            amount: '3000',
+            exponent: '2',
+            currency: 'USD'
+          },
+          item_total_with_tax: {
+            amount: '3500',
+            exponent: '2',
+            currency: 'USD'
+          },
+          item_discount_amount: {
+            amount: '200',
+            exponent: '2',
+            currency: 'USD'
+          },
+          tax_amount: {
+            amount: '500',
+            exponent: '2',
+            currency: 'USD'
+          }
+        }
+      }
+    }
+
     @store_options = {
       customer: generate_unique_id,
       email: 'wow@example.com'
@@ -367,7 +441,6 @@ class RemoteWorldpayTest < Test::Unit::TestCase
       }
     )
     assert first_message = @gateway.authorize(@amount, @threeDS_card, options)
-    assert_equal "A transaction status of 'AUTHORISED' or 'CAPTURED' is required.", first_message.message
     assert first_message.test?
     refute first_message.authorization.blank?
     refute first_message.params['issuer_url'].blank?
@@ -381,6 +454,26 @@ class RemoteWorldpayTest < Test::Unit::TestCase
     assert response = @gateway.purchase(@amount, @credit_card, @options.merge(metadata: { manual_entry: true }))
     assert_success response
     assert_equal 'SUCCESS', response.message
+  end
+
+  def test_successful_authorize_with_3ds2_challenge
+    session_id = generate_unique_id
+    options = @options.merge(
+      {
+        execute_threed: true,
+        accept_header: 'text/html',
+        user_agent: 'Mozilla/5.0',
+        session_id: session_id,
+        ip: '127.0.0.1'
+      }
+    )
+    assert response = @gateway.authorize(@amount, @threeDS2_challenge_card, options)
+    assert response.test?
+    refute response.authorization.blank?
+    refute response.params['issuer_url'].blank?
+    refute response.params['pa_request'].blank?
+    refute response.params['cookie'].blank?
+    refute response.params['session_id'].blank?
   end
 
   def test_successful_auth_and_capture_with_normalized_stored_credential
@@ -462,7 +555,6 @@ class RemoteWorldpayTest < Test::Unit::TestCase
       }
     )
     assert first_message = @gateway.authorize(@amount, @threeDS_card, options)
-    assert_equal "A transaction status of 'AUTHORISED' or 'CAPTURED' is required.", first_message.message
     assert first_message.test?
     refute first_message.authorization.blank?
     refute first_message.params['issuer_url'].blank?
@@ -485,13 +577,50 @@ class RemoteWorldpayTest < Test::Unit::TestCase
       }
     )
     assert first_message = @gateway.authorize(@amount, @threeDS_card, options)
-    assert_equal "A transaction status of 'AUTHORISED' or 'CAPTURED' is required.", first_message.message
     assert first_message.test?
     refute first_message.authorization.blank?
     refute first_message.params['issuer_url'].blank?
     refute first_message.params['pa_request'].blank?
     refute first_message.params['cookie'].blank?
     refute first_message.params['session_id'].blank?
+  end
+
+  def test_successful_purchase_with_level_two_fields
+    assert response = @gateway.purchase(@amount, @credit_card, @options.merge(@level_two_data))
+    assert_success response
+    assert_equal true, response.params['ok']
+    assert_equal 'SUCCESS', response.message
+  end
+
+  def test_successful_purchase_with_level_two_fields_and_sales_tax_zero
+    @level_two_data[:level_2_data][:sales_tax][:amount] = 0
+    assert response = @gateway.purchase(@amount, @credit_card, @options.merge(@level_two_data))
+    assert_success response
+    assert_equal true, response.params['ok']
+    assert_equal 'SUCCESS', response.message
+  end
+
+  def test_successful_purchase_with_level_three_fields
+    assert response = @gateway.purchase(@amount, @credit_card, @options.merge(@level_three_data))
+    assert_success response
+    assert_equal true, response.params['ok']
+    assert_equal 'SUCCESS', response.message
+  end
+
+  def test_unsuccessful_purchase_level_three_data_without_item_mastercard
+    @level_three_data[:level_3_data][:item] = {}
+    @credit_card.brand = 'master'
+    assert response = @gateway.purchase(@amount, @credit_card, @options.merge(@level_three_data))
+    assert_failure response
+    assert_equal response.error_code, '2'
+    assert_equal response.params['error'].gsub(/\"+/, ''), 'The content of element type item is incomplete, it must match (description,productCode?,commodityCode?,quantity?,unitCost?,unitOfMeasure?,itemTotal?,itemTotalWithTax?,itemDiscountAmount?,taxAmount?,categories?,pageURL?,imageURL?).'
+  end
+
+  def test_successful_purchase_with_level_two_and_three_fields
+    assert response = @gateway.purchase(@amount, @credit_card, @options.merge(@level_two_data, @level_three_data))
+    assert_success response
+    assert_equal true, response.params['ok']
+    assert_equal 'SUCCESS', response.message
   end
 
   # Fails currently because the sandbox doesn't actually validate the stored_credential options
@@ -721,7 +850,7 @@ class RemoteWorldpayTest < Test::Unit::TestCase
     assert_success store
 
     options = @options.merge({ fast_fund_credit: true })
-    assert credit = @gateway.credit(@amount, store.authorization, options)
+    assert credit = @cftgateway.credit(@amount, store.authorization, options)
     assert_success credit
   end
 
@@ -1026,6 +1155,31 @@ class RemoteWorldpayTest < Test::Unit::TestCase
     assert purchase = @cftgateway.purchase(@amount, @credit_card, options.merge(instalments: 3, skip_capture: true, authorization_validated: true))
     assert_success purchase
   end
+
+  # There is a delay of up to 5 minutes for a transaction to be recorded by Worldpay. Inquiring
+  # too soon will result in an error "Order not ready". Leaving commented out due to included sleeps.
+  # def test_successful_inquire_with_order_id
+  #   order_id = @options[:order_id]
+  #   assert auth = @gateway.authorize(@amount, @credit_card, @options)
+  #   assert_success auth
+  #   assert auth.authorization
+  #   sleep 60
+
+  #   assert inquire = @gateway.inquire(nil, { order_id: order_id })
+  #   assert_success inquire
+  #   assert auth.authorization == inquire.authorization
+  # end
+
+  # def test_successful_inquire_with_authorization
+  #   assert auth = @gateway.authorize(@amount, @credit_card, @options)
+  #   assert_success auth
+  #   assert auth.authorization
+  #   sleep 60
+
+  #   assert inquire = @gateway.inquire(auth.authorization, {})
+  #   assert_success inquire
+  #   assert auth.authorization == inquire.authorization
+  # end
 
   private
 

@@ -42,6 +42,7 @@ module ActiveMerchant #:nodoc:
             add_error_on_requires_action(post, options)
             add_fulfillment_date(post, options)
             request_three_d_secure(post, options)
+            add_level_three(post, options)
 
             CREATE_INTENT_ATTRIBUTES.each do |attribute|
               add_whitelisted_attribute(post, options, attribute)
@@ -53,6 +54,11 @@ module ActiveMerchant #:nodoc:
 
       def show_intent(intent_id, options)
         commit(:get, "payment_intents/#{intent_id}", nil, options)
+      end
+
+      def create_test_customer
+        response = api_request(:post, 'customers')
+        response['id']
       end
 
       def confirm_intent(intent_id, payment_method, options = {})
@@ -116,22 +122,27 @@ module ActiveMerchant #:nodoc:
       end
 
       def create_setup_intent(payment_method, options = {})
-        post = {}
-        add_customer(post, options)
-        result = add_payment_method_token(post, payment_method, options)
-        return result if result.is_a?(ActiveMerchant::Billing::Response)
+        MultiResponse.run do |r|
+          r.process do
+            post = {}
+            add_customer(post, options)
+            result = add_payment_method_token(post, payment_method, options, r)
+            return result if result.is_a?(ActiveMerchant::Billing::Response)
 
-        add_metadata(post, options)
-        add_return_url(post, options)
-        add_fulfillment_date(post, options)
-        post[:on_behalf_of] = options[:on_behalf_of] if options[:on_behalf_of]
-        post[:usage] = options[:usage] if %w(on_session off_session).include?(options[:usage])
-        post[:description] = options[:description] if options[:description]
+            add_metadata(post, options)
+            add_return_url(post, options)
+            add_fulfillment_date(post, options)
+            request_three_d_secure(post, options)
+            post[:on_behalf_of] = options[:on_behalf_of] if options[:on_behalf_of]
+            post[:usage] = options[:usage] if %w(on_session off_session).include?(options[:usage])
+            post[:description] = options[:description] if options[:description]
 
-        commit(:post, 'setup_intents', post, options)
+            commit(:post, 'setup_intents', post, options)
+          end
+        end
       end
 
-      def retrieve_setup_intent(setup_intent_id)
+      def retrieve_setup_intent(setup_intent_id, options = {})
         # Retrieving a setup_intent passing 'expand[]=latest_attempt' allows the caller to
         # check for a network_transaction_id and ds_transaction_id
         # eg (latest_attempt -> payment_method_details -> card -> network_transaction_id)
@@ -139,7 +150,7 @@ module ActiveMerchant #:nodoc:
         # Being able to retrieve these fields enables payment flows that rely on MIT exemptions, e.g: off_session
         commit(:post, "setup_intents/#{setup_intent_id}", {
           'expand[]': 'latest_attempt'
-        }, {})
+        }, options)
       end
 
       def authorize(money, payment_method, options = {})
@@ -230,7 +241,7 @@ module ActiveMerchant #:nodoc:
       end
 
       def verify(payment_method, options = {})
-        create_setup_intent(payment_method, options.merge!(confirm: true))
+        create_setup_intent(payment_method, options.merge!({ confirm: true, verify: true }))
       end
 
       def setup_purchase(money, options = {})
@@ -283,6 +294,19 @@ module ActiveMerchant #:nodoc:
         post[:metadata][:event_type] = options[:event_type] if options[:event_type]
       end
 
+      def add_level_three(post, options = {})
+        level_three = {}
+
+        level_three[:merchant_reference] = options[:merchant_reference] if options[:merchant_reference]
+        level_three[:customer_reference] = options[:customer_reference] if options[:customer_reference]
+        level_three[:shipping_address_zip] = options[:shipping_address_zip] if options[:shipping_address_zip]
+        level_three[:shipping_from_zip] = options[:shipping_from_zip] if options[:shipping_from_zip]
+        level_three[:shipping_amount] = options[:shipping_amount] if options[:shipping_amount]
+        level_three[:line_items] = options[:line_items] if options[:line_items]
+
+        post[:level3] = level_three unless level_three.empty?
+      end
+
       def add_return_url(post, options)
         return unless options[:confirm]
 
@@ -290,7 +314,7 @@ module ActiveMerchant #:nodoc:
         post[:return_url] = options[:return_url] if options[:return_url]
       end
 
-      def add_payment_method_token(post, payment_method, options)
+      def add_payment_method_token(post, payment_method, options, responses = [])
         case payment_method
         when StripePaymentToken
           post[:payment_method_data] = {
@@ -303,7 +327,9 @@ module ActiveMerchant #:nodoc:
         when String
           extract_token_from_string_and_maybe_add_customer_id(post, payment_method)
         when ActiveMerchant::Billing::CreditCard
-          get_payment_method_data_from_card(post, payment_method, options)
+          return create_payment_method_and_extract_token(post, payment_method, options, responses) if options[:verify]
+
+          get_payment_method_data_from_card(post, payment_method, options, responses)
         end
       end
 
@@ -332,7 +358,7 @@ module ActiveMerchant #:nodoc:
             cryptogram: payment.payment_cryptogram
           }
         }
-        token_response = api_request(:post, 'tokens', post, {})
+        token_response = api_request(:post, 'tokens', post, options)
         success = token_response['error'].nil?
         if success && token_response['id']
           Response.new(success, nil, token: token_response)
@@ -343,16 +369,17 @@ module ActiveMerchant #:nodoc:
         end
       end
 
-      def get_payment_method_data_from_card(post, payment_method, options)
-        return create_payment_method_and_extract_token(post, payment_method, options) unless off_session_request?(options)
+      def get_payment_method_data_from_card(post, payment_method, options, responses)
+        return create_payment_method_and_extract_token(post, payment_method, options, responses) unless off_session_request?(options)
 
         post[:payment_method_data] = add_payment_method_data(payment_method, options)
       end
 
-      def create_payment_method_and_extract_token(post, payment_method, options)
+      def create_payment_method_and_extract_token(post, payment_method, options, responses)
         payment_method_response = create_payment_method(payment_method, options)
         return payment_method_response if payment_method_response.failure?
 
+        responses << payment_method_response
         add_payment_method_token(post, payment_method_response.params['id'], options)
       end
 
@@ -450,6 +477,8 @@ module ActiveMerchant #:nodoc:
       def add_billing_address(post, options = {})
         return unless billing = options[:billing_address] || options[:address]
 
+        email = billing[:email] || options[:email]
+
         post[:billing_details] = {}
         post[:billing_details][:address] = {}
         post[:billing_details][:address][:city] = billing[:city] if billing[:city]
@@ -458,7 +487,7 @@ module ActiveMerchant #:nodoc:
         post[:billing_details][:address][:line2] = billing[:address2] if billing[:address2]
         post[:billing_details][:address][:postal_code] = billing[:zip] if billing[:zip]
         post[:billing_details][:address][:state] = billing[:state] if billing[:state]
-        post[:billing_details][:email] = billing[:email] if billing[:email]
+        post[:billing_details][:email] = email if email
         post[:billing_details][:name] = billing[:name] if billing[:name]
         post[:billing_details][:phone] = billing[:phone] if billing[:phone]
       end
@@ -500,7 +529,7 @@ module ActiveMerchant #:nodoc:
       def success_from(response, options)
         if response['status'] == 'requires_action' && !options[:execute_threed]
           response['error'] = {}
-          response['error']['message'] = 'Received unexpected 3DS authentication response. Use the execute_threed option to initiate a proper 3DS flow.'
+          response['error']['message'] = 'Received unexpected 3DS authentication response, but a 3DS initiation flag was not included in the request.'
           return false
         end
 

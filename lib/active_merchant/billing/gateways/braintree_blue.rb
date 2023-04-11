@@ -75,6 +75,12 @@ module ActiveMerchant #:nodoc:
         @braintree_gateway = Braintree::Gateway.new(@configuration)
       end
 
+      def setup_purchase
+        commit do
+          Response.new(true, 'Client token created', { client_token: @braintree_gateway.client_token.generate })
+        end
+      end
+
       def authorize(money, credit_card_or_vault_id, options = {})
         return Response.new(false, DIRECT_BANK_ERROR) if credit_card_or_vault_id.is_a? Check
 
@@ -82,9 +88,16 @@ module ActiveMerchant #:nodoc:
       end
 
       def capture(money, authorization, options = {})
-        commit do
-          result = @braintree_gateway.transaction.submit_for_settlement(authorization, localized_amount(money, options[:currency] || default_currency).to_s)
-          response_from_result(result)
+        if options[:partial_capture] == true
+          commit do
+            result = @braintree_gateway.transaction.submit_for_partial_settlement(authorization, localized_amount(money, options[:currency] || default_currency).to_s)
+            response_from_result(result)
+          end
+        else
+          commit do
+            result = @braintree_gateway.transaction.submit_for_settlement(authorization, localized_amount(money, options[:currency] || default_currency).to_s)
+            response_from_result(result)
+          end
         end
       end
 
@@ -467,14 +480,26 @@ module ActiveMerchant #:nodoc:
         end
       end
 
+      def additional_processor_response_from_result(result)
+        result.transaction&.additional_processor_response
+      end
+
       def create_transaction(transaction_type, money, credit_card_or_vault_id, options)
         transaction_params = create_transaction_parameters(money, credit_card_or_vault_id, options)
         commit do
           result = @braintree_gateway.transaction.send(transaction_type, transaction_params)
+          make_default_payment_method_token(result) if options.dig(:paypal, :paypal_flow_type) == 'checkout_with_vault' && result.success?
           response = Response.new(result.success?, message_from_transaction_result(result), response_params(result), response_options(result))
           response.cvv_result['message'] = ''
           response
         end
+      end
+
+      def make_default_payment_method_token(result)
+        @braintree_gateway.customer.update(
+          result.transaction.customer_details.id,
+          default_payment_method_token: result.transaction.paypal_details.implicitly_vaulted_payment_method_token
+        )
       end
 
       def extract_refund_args(args)
@@ -516,7 +541,10 @@ module ActiveMerchant #:nodoc:
       end
 
       def transaction_hash(result)
-        return { 'processor_response_code' => response_code_from_result(result) } unless result.success?
+        unless result.success?
+          return { 'processor_response_code' => response_code_from_result(result),
+                   'additional_processor_response' => additional_processor_response_from_result(result) }
+        end
 
         transaction = result.transaction
         if transaction.vault_customer
@@ -576,19 +604,20 @@ module ActiveMerchant #:nodoc:
         end
 
         {
-          'order_id'                => transaction.order_id,
-          'amount'                  => transaction.amount.to_s,
-          'status'                  => transaction.status,
-          'credit_card_details'     => credit_card_details,
-          'customer_details'        => customer_details,
-          'billing_details'         => billing_details,
-          'shipping_details'        => shipping_details,
-          'vault_customer'          => vault_customer,
-          'merchant_account_id'     => transaction.merchant_account_id,
-          'risk_data'               => risk_data,
-          'network_transaction_id'  => transaction.network_transaction_id || nil,
-          'processor_response_code' => response_code_from_result(result),
-          'recurring'               => transaction.recurring
+          'order_id'                     => transaction.order_id,
+          'amount'                       => transaction.amount.to_s,
+          'status'                       => transaction.status,
+          'credit_card_details'          => credit_card_details,
+          'customer_details'             => customer_details,
+          'billing_details'              => billing_details,
+          'shipping_details'             => shipping_details,
+          'vault_customer'               => vault_customer,
+          'merchant_account_id'          => transaction.merchant_account_id,
+          'risk_data'                    => risk_data,
+          'network_transaction_id'       => transaction.network_transaction_id || nil,
+          'processor_response_code'      => response_code_from_result(result),
+          'processor_authorization_code' => transaction.processor_authorization_code,
+          'recurring'                    => transaction.recurring
         }
       end
 
@@ -616,6 +645,7 @@ module ActiveMerchant #:nodoc:
         add_account_type(parameters, options) if options[:account_type]
         add_skip_options(parameters, options)
         add_merchant_account_id(parameters, options)
+        add_profile_id(parameters, options)
 
         add_payment_method(parameters, credit_card_or_vault_id, options)
         add_stored_credential_data(parameters, credit_card_or_vault_id, options)
@@ -623,6 +653,7 @@ module ActiveMerchant #:nodoc:
 
         add_descriptor(parameters, options)
         add_risk_data(parameters, options)
+        add_paypal_options(parameters, options)
         add_travel_data(parameters, options) if options[:travel_data]
         add_lodging_data(parameters, options) if options[:lodging_data]
         add_channel(parameters, options)
@@ -658,6 +689,13 @@ module ActiveMerchant #:nodoc:
         parameters[:merchant_account_id] = merchant_account_id
       end
 
+      def add_profile_id(parameters, options)
+        return unless profile_id = options[:venmo_profile_id]
+
+        parameters[:options][:venmo] = {}
+        parameters[:options][:venmo][:profile_id] = profile_id
+      end
+
       def add_transaction_source(parameters, options)
         parameters[:transaction_source] = options[:transaction_source] if options[:transaction_source]
         parameters[:transaction_source] = 'recurring' if options[:recurring]
@@ -689,6 +727,15 @@ module ActiveMerchant #:nodoc:
         parameters[:risk_data] = {
           customer_browser: options[:risk_data][:customer_browser],
           customer_ip: options[:risk_data][:customer_ip]
+        }
+      end
+
+      def add_paypal_options(parameters, options)
+        return unless options[:paypal_custom_field] || options[:paypal_description]
+
+        parameters[:options][:paypal] = {
+          custom_field: options[:paypal_custom_field],
+          description: options[:paypal_description]
         }
       end
 

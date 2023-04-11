@@ -36,7 +36,7 @@ module ActiveMerchant #:nodoc:
         add_creator_info(post, options)
         add_fraud_fields(post, options)
         add_external_cardholder_authentication_data(post, options)
-        commit(:authorize, post, options: options)
+        commit(:post, :authorize, post, options: options)
       end
 
       def capture(money, authorization, options = {})
@@ -44,7 +44,7 @@ module ActiveMerchant #:nodoc:
         add_order(post, money, options, capture: true)
         add_customer_data(post, options)
         add_creator_info(post, options)
-        commit(:capture, post, authorization: authorization)
+        commit(:post, :capture, post, authorization: authorization)
       end
 
       def refund(money, authorization, options = {})
@@ -52,13 +52,13 @@ module ActiveMerchant #:nodoc:
         add_amount(post, money, options)
         add_refund_customer_data(post, options)
         add_creator_info(post, options)
-        commit(:refund, post, authorization: authorization)
+        commit(:post, :refund, post, authorization: authorization)
       end
 
       def void(authorization, options = {})
         post = nestable_hash
         add_creator_info(post, options)
-        commit(:void, post, authorization: authorization)
+        commit(:post, :void, post, authorization: authorization)
       end
 
       def verify(payment, options = {})
@@ -66,6 +66,10 @@ module ActiveMerchant #:nodoc:
           r.process { authorize(100, payment, options) }
           r.process { void(r.authorization, options) }
         end
+      end
+
+      def inquire(authorization, options = {})
+        commit(:get, :inquire, nil, authorization: authorization)
       end
 
       def supports_scrubbing?
@@ -76,7 +80,10 @@ module ActiveMerchant #:nodoc:
         transcript.
           gsub(%r((Authorization: )[^\\]*)i, '\1[FILTERED]').
           gsub(%r(("cardNumber\\+":\\+")\d+), '\1[FILTERED]').
-          gsub(%r(("cvv\\+":\\+")\d+), '\1[FILTERED]')
+          gsub(%r(("cvv\\+":\\+")\d+), '\1[FILTERED]').
+          gsub(%r(("dpan\\+":\\+")\d+), '\1[FILTERED]').
+          gsub(%r(("pan\\+":\\+")\d+), '\1[FILTERED]').
+          gsub(%r(("cryptogram\\+":\\+"|("cavv\\+" : \\+"))[^\\]*), '\1[FILTERED]')
       end
 
       private
@@ -89,7 +96,9 @@ module ActiveMerchant #:nodoc:
         'jcb' => '125',
         'diners_club' => '132',
         'cabal' => '135',
-        'naranja' => '136'
+        'naranja' => '136',
+        'apple_pay': '302',
+        'google_pay': '320'
       }
 
       def add_order(post, money, options, capture: false)
@@ -250,20 +259,58 @@ module ActiveMerchant #:nodoc:
         month = format(payment.month, :two_digits)
         expirydate = "#{month}#{year}"
         pre_authorization = options[:pre_authorization] ? 'PRE_AUTHORIZATION' : 'FINAL_AUTHORIZATION'
-        post['cardPaymentMethodSpecificInput'] = {
-          'paymentProductId' => BRAND_MAP[payment.brand],
+        product_id = options[:payment_product_id] || BRAND_MAP[payment.brand]
+        specifics_inputs = {
+          'paymentProductId' => product_id,
           'skipAuthentication' => 'true', # refers to 3DSecure
           'skipFraudService' => 'true',
           'authorizationMode' => pre_authorization
         }
-        post['cardPaymentMethodSpecificInput']['requiresApproval'] = options[:requires_approval] unless options[:requires_approval].nil?
+        specifics_inputs['requiresApproval'] = options[:requires_approval] unless options[:requires_approval].nil?
+        if payment.is_a?(NetworkTokenizationCreditCard)
+          add_mobile_credit_card(post, payment, options, specifics_inputs, expirydate)
+        elsif payment.is_a?(CreditCard)
+          options[:google_pay_pan_only] ? add_mobile_credit_card(post, payment, options, specifics_inputs, expirydate) : add_credit_card(post, payment, specifics_inputs, expirydate)
+        end
+      end
 
-        post['cardPaymentMethodSpecificInput']['card'] = {
-          'cvv' => payment.verification_value,
-          'cardNumber' => payment.number,
-          'expiryDate' => expirydate,
-          'cardholderName' => payment.name
-        }
+      def add_credit_card(post, payment, specifics_inputs, expirydate)
+        post['cardPaymentMethodSpecificInput'] = specifics_inputs.merge({
+          'card' => {
+            'cvv' => payment.verification_value,
+            'cardNumber' => payment.number,
+            'expiryDate' => expirydate,
+            'cardholderName' => payment.name
+          }
+        })
+      end
+
+      def add_mobile_credit_card(post, payment, options, specifics_inputs, expirydate)
+        specifics_inputs['paymentProductId'] = options[:google_pay_pan_only] ? BRAND_MAP[:google_pay] : BRAND_MAP[payment.source]
+        post['mobilePaymentMethodSpecificInput'] = specifics_inputs
+        add_decrypted_payment_data(post, payment, options, expirydate)
+      end
+
+      def add_decrypted_payment_data(post, payment, options, expirydate)
+        if payment.is_a?(NetworkTokenizationCreditCard) && payment.payment_cryptogram
+          data = {
+            'cardholderName' => payment.name,
+            'cryptogram' => payment.payment_cryptogram,
+            'eci' => payment.eci,
+            'expiryDate' => expirydate,
+            'dpan' => payment.number
+          }
+          data['paymentMethod'] = 'TOKENIZED_CARD' if payment.source == :google_pay
+        # else case when google payment is an ONLY_PAN, doesn't have cryptogram or eci.
+        elsif options[:google_pay_pan_only]
+          data = {
+            'cardholderName' => payment.name,
+            'expiryDate' => expirydate,
+            'pan' => payment.number,
+            'paymentMethod' => 'CARD'
+          }
+        end
+        post['mobilePaymentMethodSpecificInput']['decryptedPaymentData'] = data if data
       end
 
       def add_customer_data(post, options, payment = nil)
@@ -370,6 +417,8 @@ module ActiveMerchant #:nodoc:
           uri + "payments/#{authorization}/refund"
         when :void
           uri + "payments/#{authorization}/cancel"
+        when :inquire
+          uri + "payments/#{authorization}"
         end
       end
 
@@ -377,9 +426,9 @@ module ActiveMerchant #:nodoc:
         "x-gcs-idempotence-key:#{options[:idempotency_key]}" if options[:idempotency_key]
       end
 
-      def commit(action, post, authorization: nil, options: {})
+      def commit(method, action, post, authorization: nil, options: {})
         begin
-          raw_response = ssl_post(url(action, authorization), post.to_json, headers(action, post, authorization, options))
+          raw_response = ssl_request(method, url(action, authorization), post&.to_json, headers(method, action, post, authorization, options))
           response = parse(raw_response)
         rescue ResponseError => e
           response = parse(e.response.body) if e.response.code.to_i >= 400
@@ -405,10 +454,10 @@ module ActiveMerchant #:nodoc:
         }
       end
 
-      def headers(action, post, authorization = nil, options = {})
+      def headers(method, action, post, authorization = nil, options = {})
         headers = {
           'Content-Type' => content_type,
-          'Authorization' => auth_digest(action, post, authorization, options),
+          'Authorization' => auth_digest(method, action, post, authorization, options),
           'Date' => date
         }
 
@@ -416,9 +465,9 @@ module ActiveMerchant #:nodoc:
         headers
       end
 
-      def auth_digest(action, post, authorization = nil, options = {})
+      def auth_digest(method, action, post, authorization = nil, options = {})
         data = <<~REQUEST
-          POST
+          #{method.to_s.upcase}
           #{content_type}
           #{date}
           #{idempotency_key_for_signature(options)}
@@ -431,7 +480,7 @@ module ActiveMerchant #:nodoc:
       end
 
       def date
-        @date ||= Time.now.strftime('%a, %d %b %Y %H:%M:%S %Z') # Must be same in digest and HTTP header
+        @date ||= Time.now.gmtime.strftime('%a, %d %b %Y %H:%M:%S %Z') # Must be same in digest and HTTP header
       end
 
       def content_type
@@ -440,6 +489,8 @@ module ActiveMerchant #:nodoc:
 
       def success_from(action, response)
         return false if response['errorId'] || response['error_message']
+
+        return %w(CAPTURED CAPTURE_REQUESTED).include?(response.dig('payment', 'status')) if response.dig('payment', 'paymentOutput', 'paymentMethod') == 'mobile'
 
         case action
         when :authorize

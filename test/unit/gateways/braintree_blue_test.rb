@@ -94,6 +94,16 @@ class BraintreeBlueTest < Test::Unit::TestCase
     assert_equal true, response.test
   end
 
+  def test_partial_capture_transaction
+    Braintree::TransactionGateway.any_instance.expects(:submit_for_partial_settlement).
+      returns(braintree_result(id: 'capture_transaction_id'))
+
+    response = @gateway.capture(100, 'transaction_id', { partial_capture: true })
+
+    assert_equal 'capture_transaction_id', response.authorization
+    assert_equal true, response.test
+  end
+
   def test_refund_transaction
     Braintree::TransactionGateway.any_instance.expects(:refund).
       returns(braintree_result(id: 'refund_transaction_id'))
@@ -210,6 +220,31 @@ class BraintreeBlueTest < Test::Unit::TestCase
     @gateway.authorize(100, credit_card('41111111111111111111'), service_fee_amount: '2.31')
   end
 
+  def test_venmo_profile_id_can_be_specified
+    Braintree::TransactionGateway.any_instance.expects(:sale).with do |params|
+      (params[:options][:venmo][:profile_id] == 'profile_id')
+    end.returns(braintree_result)
+
+    @gateway.authorize(100, credit_card('41111111111111111111'), venmo_profile_id: 'profile_id')
+  end
+
+  def test_customer_has_default_payment_method
+    options = {
+      payment_method_nonce: 'fake-paypal-future-nonce',
+      store: true,
+      device_data: 'device_data',
+      paypal: {
+        paypal_flow_type: 'checkout_with_vault'
+      }
+    }
+
+    Braintree::TransactionGateway.any_instance.expects(:sale).returns(braintree_result(paypal: { implicitly_vaulted_payment_method_token: 'abc123' }))
+
+    Braintree::CustomerGateway.any_instance.expects(:update).with(nil, { default_payment_method_token: 'abc123' }).returns(nil)
+
+    @gateway.authorize(100, 'fake-paypal-future-nonce', options)
+  end
+
   def test_risk_data_can_be_specified
     risk_data = {
       customer_browser: 'User-Agent Header',
@@ -227,6 +262,15 @@ class BraintreeBlueTest < Test::Unit::TestCase
     end.returns(braintree_result)
 
     @gateway.authorize(100, credit_card('41111111111111111111'), hold_in_escrow: true)
+  end
+
+  def test_paypal_options_can_be_specified
+    Braintree::TransactionGateway.any_instance.expects(:sale).with do |params|
+      (params[:options][:paypal][:custom_field] == 'abc')
+      (params[:options][:paypal][:description] == 'shoes')
+    end.returns(braintree_result)
+
+    @gateway.authorize(100, credit_card('4111111111111111'), paypal_custom_field: 'abc', paypal_description: 'shoes')
   end
 
   def test_merchant_account_id_absent_if_not_provided

@@ -145,6 +145,7 @@ module ActiveMerchant #:nodoc:
 
       def void(identification, options = {})
         post = {}
+        post[:reverse_transfer] = options[:reverse_transfer] if options[:reverse_transfer]
         post[:metadata] = options[:metadata] if options[:metadata]
         post[:reason] = options[:reason] if options[:reason]
         post[:expand] = [:charge]
@@ -280,6 +281,7 @@ module ActiveMerchant #:nodoc:
       def scrub(transcript)
         transcript.
           gsub(%r((Authorization: Basic )\w+), '\1[FILTERED]').
+          gsub(%r((Authorization: Bearer )\w+), '\1[FILTERED]').
           gsub(%r((&?three_d_secure\[cryptogram\]=)[\w=]*(&?)), '\1[FILTERED]\2').
           gsub(%r(((\[card\]|card)\[cryptogram\]=)[^&]+(&?)), '\1[FILTERED]\3').
           gsub(%r(((\[card\]|card)\[cvc\]=)\d+), '\1[FILTERED]').
@@ -301,7 +303,7 @@ module ActiveMerchant #:nodoc:
       def delete_latest_test_external_account(account)
         return unless test?
 
-        auth_header = { 'Authorization': "Bearer #{options[:login]}" }
+        auth_header = { 'Authorization' => 'Basic ' + Base64.strict_encode64(options[:login].to_s + ':').strip }
         url = "#{live_url}accounts/#{CGI.escape(account)}/external_accounts"
         accounts_response = JSON.parse(ssl_get("#{url}?limit=100", auth_header))
         to_delete = accounts_response['data'].reject { |ac| ac['default_for_currency'] }
@@ -389,6 +391,7 @@ module ActiveMerchant #:nodoc:
         end
 
         add_metadata(post, options)
+        add_shipping_address(post, payment, options)
         add_application_fee(post, options)
         add_exchange_rate(post, options)
         add_destination(post, options)
@@ -553,6 +556,23 @@ module ActiveMerchant #:nodoc:
       def add_emv_metadata(post, creditcard)
         post[:metadata] ||= {}
         post[:metadata][:card_read_method] = creditcard.read_method if creditcard.respond_to?(:read_method)
+      end
+
+      def add_shipping_address(post, payment, options = {})
+        return unless shipping = options[:shipping_address]
+        return unless shipping_name = shipping[:name]
+
+        post[:shipping] = {}
+
+        post[:shipping][:name] = shipping_name
+        post[:shipping][:address] = {}
+        post[:shipping][:address][:line1] = shipping[:address1]
+        post[:shipping][:address][:line2] = shipping[:address2] if shipping[:address2]
+        post[:shipping][:address][:city] = shipping[:city] if shipping[:city]
+        post[:shipping][:address][:country] = shipping[:country] if shipping[:country]
+        post[:shipping][:address][:state] = shipping[:state] if shipping[:state]
+        post[:shipping][:address][:postal_code] = shipping[:zip] if shipping[:zip]
+        post[:shipping][:phone] = shipping[:phone_number] if shipping[:phone_number]
       end
 
       def add_source_owner(post, creditcard, options)

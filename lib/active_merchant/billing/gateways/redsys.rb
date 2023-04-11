@@ -91,7 +91,7 @@ module ActiveMerchant #:nodoc:
       # More operations are supported by the gateway itself, but
       # are not supported in this library.
       SUPPORTED_TRANSACTIONS = {
-        purchase:   'A',
+        purchase:   '0',
         authorize:  '1',
         capture:    '2',
         refund:     '3',
@@ -266,9 +266,13 @@ module ActiveMerchant #:nodoc:
       end
 
       def verify(creditcard, options = {})
-        MultiResponse.run(:use_first_response) do |r|
-          r.process { authorize(100, creditcard, options) }
-          r.process(:ignore_result) { void(r.authorization, options) }
+        if options[:sca_exemption_behavior_override] == 'endpoint_and_ntid'
+          purchase(0, creditcard, options)
+        else
+          MultiResponse.run(:use_first_response) do |r|
+            r.process { authorize(100, creditcard, options) }
+            r.process(:ignore_result) { void(r.authorization, options) }
+          end
         end
       end
 
@@ -685,7 +689,7 @@ module ActiveMerchant #:nodoc:
         cipher = OpenSSL::Cipher.new('DES3')
         cipher.encrypt
 
-        cipher.key = Base64.strict_decode64(key)
+        cipher.key = Base64.urlsafe_decode64(key)
         # The OpenSSL default of an all-zeroes ("\\0") IV is used.
         cipher.padding = 0
 

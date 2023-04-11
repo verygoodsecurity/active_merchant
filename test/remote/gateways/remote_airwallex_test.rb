@@ -7,9 +7,11 @@ class RemoteAirwallexTest < Test::Unit::TestCase
     # https://www.airwallex.com/docs/online-payments__test-card-numbers
     @amount = 100
     @declined_amount = 8014
-    @credit_card = credit_card('4111 1111 1111 1111')
+    @credit_card = credit_card('4012 0003 0000 1003')
     @declined_card = credit_card('2223 0000 1018 1375')
-    @options = { return_url: 'https://example.com' }
+    @options = { return_url: 'https://example.com', description: 'a test transaction' }
+    @stored_credential_cit_options = { initial_transaction: true, initiator: 'cardholder', reason_type: 'recurring', network_transaction_id: nil }
+    @stored_credential_mit_options = { initial_transaction: false, initiator: 'merchant', reason_type: 'recurring' }
   end
 
   def test_successful_purchase
@@ -18,8 +20,29 @@ class RemoteAirwallexTest < Test::Unit::TestCase
     assert_equal 'AUTHORIZED', response.message
   end
 
-  def test_successful_purchase_with_more_options
+  def test_successful_purchase_with_shipping_address
+    response = @gateway.purchase(@amount, @credit_card, @options.merge(shipping_address: address))
+    assert_success response
+    assert_equal 'AUTHORIZED', response.message
+  end
+
+  def test_successful_purchase_with_address
     response = @gateway.purchase(@amount, @credit_card, @options.merge(address))
+    assert_success response
+    assert_equal 'AUTHORIZED', response.message
+  end
+
+  def test_successful_purchase_with_specified_ids
+    request_id = SecureRandom.uuid
+    merchant_order_id = SecureRandom.uuid
+    response = @gateway.purchase(@amount, @credit_card, @options.merge(request_id: request_id, merchant_order_id: merchant_order_id))
+    assert_success response
+    assert_match(request_id, response.params.dig('request_id'))
+    assert_match(merchant_order_id, response.params.dig('merchant_order_id'))
+  end
+
+  def test_successful_purchase_with_skip_3ds
+    response = @gateway.purchase(@amount, @credit_card, @options.merge({ skip_3ds: 'true' }))
     assert_success response
     assert_equal 'AUTHORIZED', response.message
   end
@@ -29,6 +52,12 @@ class RemoteAirwallexTest < Test::Unit::TestCase
     assert_failure response
     assert_equal 'The card issuer declined this transaction. Please refer to the original response code.', response.message
     assert_equal '14', response.error_code
+  end
+
+  def test_purchase_with_reused_id_raises_error
+    assert_raise ArgumentError do
+      @gateway.purchase(@amount, @credit_card, @options.merge(request_id: '1234'))
+    end
   end
 
   def test_successful_authorize_and_capture
@@ -61,10 +90,10 @@ class RemoteAirwallexTest < Test::Unit::TestCase
   end
 
   def test_successful_refund
-    purchase = @gateway.purchase(@amount, @credit_card, @options.merge(generated_ids))
+    purchase = @gateway.purchase(@amount, @credit_card, @options)
     assert_success purchase
 
-    assert refund = @gateway.refund(@amount, purchase.authorization, @options.merge(generated_ids))
+    assert refund = @gateway.refund(@amount, purchase.authorization, @options)
     assert_success refund
     assert_equal 'RECEIVED', refund.message
   end
@@ -84,7 +113,7 @@ class RemoteAirwallexTest < Test::Unit::TestCase
   end
 
   def test_successful_void
-    auth = @gateway.authorize(@amount, @credit_card, @options.merge(generated_ids))
+    auth = @gateway.authorize(@amount, @credit_card, @options)
     assert_success auth
 
     assert void = @gateway.void(auth.authorization, @options)
@@ -110,6 +139,59 @@ class RemoteAirwallexTest < Test::Unit::TestCase
     assert_match %r{Invalid card number}, response.message
   end
 
+  def test_successful_cit_with_recurring_stored_credential
+    auth = @gateway.authorize(@amount, @credit_card, @options.merge(stored_credential: @stored_credential_cit_options))
+    assert_success auth
+  end
+
+  def test_successful_mit_with_recurring_stored_credential
+    auth = @gateway.authorize(@amount, @credit_card, @options.merge(stored_credential: @stored_credential_cit_options))
+    assert_success auth
+
+    add_cit_network_transaction_id_to_stored_credential(auth)
+
+    purchase = @gateway.purchase(@amount, @credit_card, @options.merge(stored_credential: @stored_credential_mit_options))
+    assert_success purchase
+  end
+
+  def test_successful_mit_with_unscheduled_stored_credential
+    @stored_credential_cit_options[:reason_type] = 'unscheduled'
+    @stored_credential_mit_options[:reason_type] = 'unscheduled'
+
+    auth = @gateway.authorize(@amount, @credit_card, @options.merge(stored_credential: @stored_credential_cit_options))
+    assert_success auth
+
+    add_cit_network_transaction_id_to_stored_credential(auth)
+
+    purchase = @gateway.purchase(@amount, @credit_card, @options.merge(stored_credential: @stored_credential_mit_options))
+    assert_success purchase
+  end
+
+  def test_successful_mit_with_installment_stored_credential
+    @stored_credential_cit_options[:reason_type] = 'installment'
+    @stored_credential_mit_options[:reason_type] = 'installment'
+
+    auth = @gateway.authorize(@amount, @credit_card, @options.merge(stored_credential: @stored_credential_cit_options))
+    assert_success auth
+
+    add_cit_network_transaction_id_to_stored_credential(auth)
+
+    purchase = @gateway.purchase(@amount, @credit_card, @options.merge(stored_credential: @stored_credential_mit_options))
+    assert_success purchase
+  end
+
+  def test_successful_network_transaction_id_override_with_mastercard
+    mastercard = credit_card('2223 0000 1018 1375', { brand: 'master' })
+
+    auth = @gateway.authorize(@amount, mastercard, @options.merge(stored_credential: @stored_credential_cit_options))
+    assert_success auth
+
+    add_cit_network_transaction_id_to_stored_credential(auth)
+
+    purchase = @gateway.purchase(@amount, mastercard, @options.merge(stored_credential: @stored_credential_mit_options))
+    assert_success purchase
+  end
+
   def test_transcript_scrubbing
     transcript = capture_transcript(@gateway) do
       @gateway.purchase(@amount, @credit_card, @options)
@@ -122,10 +204,50 @@ class RemoteAirwallexTest < Test::Unit::TestCase
     assert_scrubbed(@gateway.options[:client_api_key], transcript)
   end
 
+  def test_successful_authorize_with_3ds_v1_options
+    @options[:three_d_secure] = {
+      version: '1',
+      cavv: 'VGhpcyBpcyBhIHRlc3QgYmFzZTY=',
+      eci: '02',
+      xid: 'b2h3aDZrd3BJWXVCWEFMbzJqSGQ='
+    }
+
+    response = @gateway.authorize(@amount, @credit_card, @options)
+    assert_success response
+    assert_match 'AUTHORIZED', response.message
+  end
+
+  def test_successful_authorize_with_3ds_v2_options
+    @options[:three_d_secure] = {
+      version: '2.2.0',
+      cavv: 'MTIzNDU2Nzg5MDA5ODc2NTQzMjE=',
+      ds_transaction_id: 'f25084f0-5b16-4c0a-ae5d-b24808a95e4b',
+      eci: '02',
+      three_ds_server_trans_id: 'df8b9557-e41b-4e17-87e9-2328694a2ea0'
+    }
+
+    response = @gateway.authorize(@amount, @credit_card, @options)
+    assert_success response
+    assert_match 'AUTHORIZED', response.message
+  end
+
+  def test_successful_purchase_with_3ds_v2_options
+    @options[:three_d_secure] = {
+      version: '2.0',
+      cavv: 'MTIzNDU2Nzg5MDA5ODc2NTQzMjE=',
+      ds_transaction_id: 'f25084f0-5b16-4c0a-ae5d-b24808a95e4b',
+      eci: '02',
+      three_ds_server_trans_id: 'df8b9557-e41b-4e17-87e9-2328694a2ea0'
+    }
+
+    response = @gateway.purchase(@amount, @credit_card, @options)
+    assert_success response
+    assert_match 'AUTHORIZED', response.message
+  end
+
   private
 
-  def generated_ids
-    timestamp = (Time.now.to_f.round(2) * 100).to_i.to_s
-    { request_id: timestamp.to_s, merchant_order_id: "mid_#{timestamp}" }
+  def add_cit_network_transaction_id_to_stored_credential(auth)
+    @stored_credential_mit_options[:network_transaction_id] = auth.params['latest_payment_attempt']['provider_transaction_id']
   end
 end

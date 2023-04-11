@@ -21,25 +21,33 @@ module ActiveMerchant #:nodoc:
         void: '/pa/payment_intents/%{id}/cancel'
       }
 
+      # Provided by Airwallex for testing purposes
+      TEST_NETWORK_TRANSACTION_IDS = {
+        visa: '123456789012345',
+        master: 'MCC123ABC0101'
+      }
+
       def initialize(options = {})
         requires!(options, :client_id, :client_api_key)
         @client_id = options[:client_id]
         @client_api_key = options[:client_api_key]
         super
-        setup_ids(options) unless options[:request_id] && options[:merchant_order_id]
         @access_token = setup_access_token
       end
 
       def purchase(money, card, options = {})
-        requires!(options, :return_url)
-        payment_intent_id = create_payment_intent(money, @options)
+        payment_intent_id = create_payment_intent(money, options)
         post = {
-          'request_id' => update_request_id(@options, 'purchase'),
-          'return_url' => options[:return_url]
+          'request_id' => request_id(options),
+          'merchant_order_id' => merchant_order_id(options)
         }
         add_card(post, card, options)
+        add_descriptor(post, options)
+        add_stored_credential(post, options)
+        add_return_url(post, options)
         post['payment_method_options'] = { 'card' => { 'auto_capture' => false } } if authorization_only?(options)
 
+        add_three_ds(post, options)
         commit(:sale, post, payment_intent_id)
       end
 
@@ -51,11 +59,13 @@ module ActiveMerchant #:nodoc:
       def capture(money, authorization, options = {})
         raise ArgumentError, 'An authorization value must be provided.' if authorization.blank?
 
-        update_request_id(@options, 'capture')
         post = {
-          'request_id' => @options[:request_id],
+          'request_id' => request_id(options),
+          'merchant_order_id' => merchant_order_id(options),
           'amount' => amount(money)
         }
+        add_descriptor(post, options)
+
         commit(:capture, post, authorization)
       end
 
@@ -65,8 +75,8 @@ module ActiveMerchant #:nodoc:
         post = {}
         post[:amount] = amount(money)
         post[:payment_intent_id] = authorization
-        post[:request_id] = update_request_id(@options, 'refund')
-        post[:merchant_order_id] = @options[:merchant_order_id]
+        post[:request_id] = request_id(options)
+        post[:merchant_order_id] = merchant_order_id(options)
 
         commit(:refund, post)
       end
@@ -74,9 +84,11 @@ module ActiveMerchant #:nodoc:
       def void(authorization, options = {})
         raise ArgumentError, 'An authorization value must be provided.' if authorization.blank?
 
-        update_request_id(@options, 'void')
         post = {}
-        post[:request_id] = @options[:request_id]
+        post[:request_id] = request_id(options)
+        post[:merchant_order_id] = merchant_order_id(options)
+        add_descriptor(post, options)
+
         commit(:void, post, authorization)
       end
 
@@ -99,15 +111,20 @@ module ActiveMerchant #:nodoc:
 
       private
 
-      def setup_ids(options)
-        request_id, merchant_order_id = generate_ids
-        options[:request_id] = options[:request_id] || request_id
-        options[:merchant_order_id] = options[:merchant_order_id] || merchant_order_id
+      def request_id(options)
+        options[:request_id] || generate_uuid
       end
 
-      def generate_ids
-        timestamp = (Time.now.to_f.round(2) * 100).to_i.to_s
-        [timestamp.to_s, "mid_#{timestamp}"]
+      def merchant_order_id(options)
+        options[:merchant_order_id] || options[:order_id] || generate_uuid
+      end
+
+      def add_return_url(post, options)
+        post[:return_url] = options[:return_url] if options[:return_url]
+      end
+
+      def generate_uuid
+        SecureRandom.uuid
       end
 
       def setup_access_token
@@ -125,47 +142,62 @@ module ActiveMerchant #:nodoc:
         base_url + ENDPOINTS[action].to_s % { id: id }
       end
 
+      def add_referrer_data(post)
+        post[:referrer_data] = { type: 'spreedly' }
+      end
+
       def create_payment_intent(money, options = {})
         post = {}
         add_invoice(post, money, options)
-        post[:request_id] = options[:request_id]
-        post[:merchant_order_id] = options[:merchant_order_id]
+        add_order(post, options)
+        post[:request_id] = "#{request_id(options)}_setup"
+        post[:merchant_order_id] = merchant_order_id(options)
+        add_referrer_data(post)
+        add_descriptor(post, options)
+        post['payment_method_options'] = { 'card' => { 'risk_control' => { 'three_ds_action' => 'SKIP_3DS' } } } if options[:skip_3ds]
 
         response = commit(:setup, post)
+        raise ArgumentError.new(response.message) unless response.success?
+
         response.params['id']
       end
 
       def add_billing(post, card, options = {})
-        return unless card_has_billing_info(card, options)
+        return unless has_name_info?(card)
 
         billing = post['payment_method']['card']['billing'] || {}
         billing['email'] = options[:email] if options[:email]
         billing['phone'] = options[:phone] if options[:phone]
         billing['first_name'] = card.first_name
         billing['last_name'] = card.last_name
-        billing['address'] = add_address(card, options) if card_has_address_info(card, options)
+        billing_address = options[:billing_address]
+        billing['address'] = build_address(billing_address) if has_required_address_info?(billing_address)
 
         post['payment_method']['card']['billing'] = billing
       end
 
-      def card_has_billing_info(card, options)
+      def has_name_info?(card)
         # These fields are required if billing data is sent.
         card.first_name && card.last_name
       end
 
-      def card_has_address_info(card, options)
+      def has_required_address_info?(address)
         # These fields are required if address data is sent.
-        options[:address1] && options[:country]
+        return unless address
+
+        address[:address1] && address[:country]
       end
 
-      def add_address(card, options = {})
-        address = {}
-        address[:country_code] = options[:country]
-        address[:street] = options[:address1]
-        address[:city] = options[:city] if options[:city] # required per doc, not in practice
-        address[:postcode] = options[:zip] if options[:zip]
-        address[:state] = options[:state] if options[:state]
-        address
+      def build_address(address)
+        return unless address
+
+        address_data = {} # names r hard
+        address_data[:country_code] = address[:country]
+        address_data[:street] = address[:address1]
+        address_data[:city] = address[:city] if address[:city] # required per doc, not in practice
+        address_data[:postcode] = address[:zip] if address[:zip]
+        address_data[:state] = address[:state] if address[:state]
+        address_data
       end
 
       def add_invoice(post, money, options)
@@ -181,18 +213,106 @@ module ActiveMerchant #:nodoc:
             'expiry_year' => card.year.to_s,
             'number' => card.number.to_s,
             'name' => card.name,
-            'cvc' => card.verification_value
+            'cvc' => card.verification_value,
+            'brand' => card.brand
           }
         }
         add_billing(post, card, options)
+      end
+
+      def add_order(post, options)
+        return unless shipping_address = options[:shipping_address]
+
+        physical_address = build_shipping_address(shipping_address)
+        first_name, last_name = split_names(shipping_address[:name])
+        shipping = {}
+        shipping[:first_name] = first_name if first_name
+        shipping[:last_name] = last_name if last_name
+        shipping[:phone_number] = shipping_address[:phone_number] if shipping_address[:phone_number]
+        shipping[:address] = physical_address
+        post[:order] = { shipping: shipping }
+      end
+
+      def build_shipping_address(shipping_address)
+        address = {}
+        address[:city] = shipping_address[:city]
+        address[:country_code] = shipping_address[:country]
+        address[:postcode] = shipping_address[:zip]
+        address[:state] = shipping_address[:state]
+        address[:street] = shipping_address[:address1]
+        address
+      end
+
+      def add_stored_credential(post, options)
+        return unless stored_credential = options[:stored_credential]
+
+        external_recurring_data = post[:external_recurring_data] = {}
+
+        case stored_credential.dig(:reason_type)
+        when 'recurring', 'installment'
+          external_recurring_data[:merchant_trigger_reason] = 'scheduled'
+        when 'unscheduled'
+          external_recurring_data[:merchant_trigger_reason] = 'unscheduled'
+        end
+
+        external_recurring_data[:original_transaction_id] = test_mit?(options) ? test_network_transaction_id(post) : stored_credential.dig(:network_transaction_id)
+        external_recurring_data[:triggered_by] = stored_credential.dig(:initiator) == 'cardholder' ? 'customer' : 'merchant'
+      end
+
+      def test_network_transaction_id(post)
+        case post['payment_method']['card']['brand']
+        when 'visa'
+          TEST_NETWORK_TRANSACTION_IDS[:visa]
+        when 'master'
+          TEST_NETWORK_TRANSACTION_IDS[:master]
+        end
+      end
+
+      def test_mit?(options)
+        test? && options.dig(:stored_credential, :initiator) == 'merchant'
+      end
+
+      def add_three_ds(post, options)
+        return unless three_d_secure = options[:three_d_secure]
+
+        pm_options = post.dig('payment_method_options', 'card')
+
+        external_three_ds = {
+          'version': format_three_ds_version(three_d_secure),
+          'eci': three_d_secure[:eci]
+        }.merge(three_ds_version_specific_fields(three_d_secure))
+
+        pm_options ? pm_options.merge!('external_three_ds': external_three_ds) : post['payment_method_options'] = { 'card': { 'external_three_ds': external_three_ds } }
+      end
+
+      def format_three_ds_version(three_d_secure)
+        version = three_d_secure[:version].split('.')
+
+        version.push('0') until version.length == 3
+        version.join('.')
+      end
+
+      def three_ds_version_specific_fields(three_d_secure)
+        if three_d_secure[:version].to_f >= 2
+          {
+            'authentication_value': three_d_secure[:cavv],
+            'ds_transaction_id': three_d_secure[:ds_transaction_id],
+            'three_ds_server_transaction_id': three_d_secure[:three_ds_server_trans_id]
+          }
+        else
+          {
+            'cavv': three_d_secure[:cavv],
+            'xid': three_d_secure[:xid]
+          }
+        end
       end
 
       def authorization_only?(options = {})
         options.include?(:auto_capture) && options[:auto_capture] == false
       end
 
-      def update_request_id(options, action)
-        options[:request_id] += "_#{action}"
+      def add_descriptor(post, options)
+        post[:descriptor] = options[:description] if options[:description]
       end
 
       def parse(body)
@@ -201,6 +321,7 @@ module ActiveMerchant #:nodoc:
 
       def commit(action, post, id = nil)
         url = build_request_url(action, id)
+
         post_headers = { 'Authorization' => "Bearer #{@access_token}", 'Content-Type' => 'application/json' }
         response = parse(ssl_post(url, post_data(post), post_headers))
 
@@ -209,8 +330,8 @@ module ActiveMerchant #:nodoc:
           message_from(response),
           response,
           authorization: authorization_from(response),
-          avs_result: AVSResult.new(code: response['some_avs_response_key']),
-          cvv_result: CVVResult.new(response['some_cvv_response_key']),
+          avs_result: AVSResult.new(code: response.dig('latest_payment_attempt', 'authentication_data', 'avs_result')),
+          cvv_result: CVVResult.new(response.dig('latest_payment_attempt', 'authentication_data', 'cvc_code')),
           test: test?,
           error_code: error_code_from(response)
         )

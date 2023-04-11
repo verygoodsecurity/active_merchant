@@ -20,6 +20,10 @@ airwallex:
   client_id: SOMECREDENTIAL
   client_api_key: ANOTHERCREDENTIAL
 
+alelo:
+  client_id: xxxxxxx
+  client_secret: xxxxxxx
+
 allied_wallet:
   site_id: site_id
   merchant_id: merchant_id
@@ -117,6 +121,7 @@ braintree_blue_with_ach_enabled:
   public_key: Y
   private_key: Z
   merchant_account_id: A
+  venmo_profile_id: B
 
 braintree_blue_with_processing_rules:
   merchant_id: X
@@ -189,7 +194,13 @@ checkout:
   password: Password1!
 
 checkout_v2:
-  secret_key: secret_key
+  secret_key: SECRET_KEY_FOR_BASIC_TRANSACTIONS
+  client_id: CLIENT_ID_FOR_OAUTH_TRANSACTIONS
+  client_secret: CLIENT_SECRET_FOR_OAUTH_TRANSACTIONS
+
+checkout_v2_token:
+  secret_key: sk_sbox_xxxxxxxxxxxxxxxxx
+  public_key: pk_sbox_xxxxxxxxxxxxxxxxx
 
 citrus_pay:
   userid: CPF00001
@@ -213,6 +224,11 @@ clearhaus_secure:
     InviQqJd1KTGRDmWIGrE5YACVmW2JSszD9t5VKxkAA==
     -----END RSA PRIVATE KEY-----
 
+commerce_hub:
+  api_key: API KEY
+  api_secret: API SECRET
+  merchant_id: MERCHANT ID
+  terminal_id: TERMINAL ID
 
 # Contact Support at it_support@commercegate.com for credentials and offer/site
 commercegate:
@@ -259,6 +275,12 @@ cyber_source:
 cyber_source_latam_pe:
   login: merchant_id
   password: soap_key
+
+# Working credentials, no need to replace
+cybersource_rest:
+  merchant_id: "testrest"
+  public_key: "08c94330-f618-42a3-b09d-e1e43be5efda"
+  private_key: "yBJxy6LjM2TmcPGu+GaJrHtkke25fPpUX+UY6/L/1tE="
 
 # Working credentials, no need to replace
 d_local:
@@ -698,6 +720,11 @@ orbital_gateway:
   password: PASSWORD
   merchant_id: MERCHANTID
 
+orbital_tandem_gateway:
+  login: LOGIN
+  password: PASSWORD
+  merchant_id: MERCHANTID
+
 pagadito:
   username: USERNAME
   wsk: WSK
@@ -883,12 +910,17 @@ payway_dot_com:
 pin:
   api_key: "I_mo9BUUUXIwXF-avcs3LA"
 
+plexo:
+  client_id: YOUR_CLIENT_ID
+  api_key: YOUR_API_KEY
+  merchant_id: YOUR_MERCHANT_ID
+
 plugnpay:
   login: LOGIN
   password: PASSWORD
 
 priority:
-  key: SANDBOX_KEY
+  api_key: SANDBOX_KEY
   secret: SECRET
   merchant_id: MERCHANT_ID
 
@@ -1107,10 +1139,18 @@ qvalent:
     RFjxWKtn9pXbM1PLmUXCkKQnSJSeD1K0NjV+g8KFChTEgmhnLogyF/7YYw/amfc=
     -----END CERTIFICATE-----
 
+rapyd:
+  access_key: SOMECREDENTIAL
+  secret_key: ANOTHERCREDENTIAL
+
 raven_pac_net:
   user: ernest
   secret: "all good men die young"
   prn: 987743
+
+reach:
+  merchant_id: 'xxxxxxx'
+  secret: 'xxxxxxx'
 
 realex:
   login: X
@@ -1250,6 +1290,15 @@ secure_pay_tech:
 securion_pay:
   secret_key: pr_test_qZN4VVIKCySfCeXCBoHO9DBe
 
+shift4:
+  client_guid: YOUR_CLIENT_ID
+  auth_token: YOUR_AUTH_TOKEN
+
+# Working credentials, no need to replace
+simetrik:
+  client_id: 'wNhJBdrKDk3vTmkQMAWi5zWN7y21adO3'
+  client_secret: 'fq2riPpiDJaAwS4_UMAXZy1_nU1jNGz0F6gAFWOJFNmm_TfC8EFiHwMmGKAEDkwY'
+
 #  Replace with your serial numbers for the skipjack test environment
 skipjack:
   login: X
@@ -1375,6 +1424,7 @@ visanet_peru:
 vpos:
   public_key: SOMECREDENTIAL
   private_key: ANOTHERCREDENTIAL
+  encryption_key: "-----BEGIN PUBLIC KEY-----\n ..."
   commerce: 123
   commerce_branch: 45
 
