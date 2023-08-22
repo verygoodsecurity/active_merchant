@@ -440,7 +440,7 @@ garanti:
 getnet:
   username: "USERNAME"
   password: "PASSWORD"
-  
+
 global_collect:
   merchant_id: 2196
   api_key_id: c91d6752cbbf9cf1
@@ -685,9 +685,9 @@ nmi_secure:
   security_key: '6457Thfj624V5r7WUwc5v6a68Zsd6YEm'
 
 nuvei:
-  merchant_id: ''
-  merchant_site_id: ''
-  secret: ''
+  merchant_site_id: "239358"
+  merchant_id:      "6681232478277060313"
+  secret:           "n5BgzgEVl4X8hH5UOdiPxjy7aaJt4MS2c4H4vNlAqOmXqOsJ7vdjVCdNhDXxHFNK"
 
 ogone:
   login: LOGIN
