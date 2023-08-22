@@ -24,6 +24,7 @@ module ActiveMerchant #:nodoc:
           add_payment(post, money, payment, options)
           add_device_details(post, options)
           add_billing_address(post, options)
+          post[:clientUniqueId] = options[:transaction_id]
           commit('payment', post, options)
         end
       end
@@ -136,13 +137,15 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_payment_option(post, payment)
+        # TODO: Add support for ACH payments
+        # "alternativePaymentMethod": {
+        #   "paymentMethod": "apmgw_ACH",
+        #   "AccountNumber": "111111111",
+        #   "RoutingNumber": "999999992"
+        # }
         post[:paymentOption] = {
-          :card => {
-            :cardNumber => payment.number,
-            :cardHolderName => payment.name,
-            :expirationMonth => format(payment.month, :two_digits),
-            :expirationYear => format(payment.year, :four_digits_year),
-            :CVV => payment.verification_value,
+          :alternativePaymentMethod => {
+            :paymentMethod => "apmgw_Secure_Bank_Transfer"
           }
         }
       end

@@ -113,11 +113,52 @@ class RemoteNuveiAchTest < Test::Unit::TestCase
     options[:user_token_id]  = generate_unique_id
     options[:transaction_id] = generate_unique_id
     response                 = @gateway.purchase(@amount, @check, options)
+
+    expected_response                    = @example_successful_response.dup
+    expected_response['clientRequestId'] = options[:order_id]
+    expected_response['clientUniqueId']  = options[:transaction_id]
+    expected_response['userTokenId']     = options[:user_token_id]
+
+    # compare each key individually
+    expected_response.each do |key, value|
+      assert_equal expected_response[key], response.params[key], "key: #{key}"
+    end
+
     assert_success response
     assert_equal 'Succeeded', response.message
     # Ensure that the authorization has a pipe to separate transactionId and user_payment_option_id
     assert response.authorization.include? "|"
   end
 
+  def successful_purchase_response(
+    merchant_id:,
+    order_id:,
+    client_request_id:,
+    client_unique_id:,
+    user_payment_option_id:,
+    session_token:,
+    user_token_id:
+  )
+    {
+      "clientRequestId":   "#{client_request_id}",
+      "clientUniqueId":    "#{client_unique_id}",
+      "errCode":           0,
+      "internalRequestId": 17817111,
+      "merchantId":        "#{merchant_id}",
+      "merchantSiteId":    "2",
+      "orderId":           "#{order_id}",
+      "paymentOption":     {
+        "redirectUrl":         "",
+        "userPaymentOptionId": "#{user_payment_option_id}",
+        "card":                {}
+      },
+      "reason":            "",
+      "sessionToken":      "#{session_token}",
+      "status":            "SUCCESS",
+      "transactionStatus": "REDIRECT",
+      "userTokenId":       "#{user_token_id}",
+      "version":           "1.0"
+    }
+  end
 end
 
