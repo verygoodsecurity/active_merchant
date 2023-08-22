@@ -685,8 +685,13 @@ nmi_secure:
   security_key: '6457Thfj624V5r7WUwc5v6a68Zsd6YEm'
 
 nuvei:
-  merchant_site_id: "239358"
+  merchant_id: ''
+  merchant_site_id: ''
+  secret: ''
+
+nuvei_ach:
   merchant_id:      "6681232478277060313"
+  merchant_site_id: "239358"
   secret:           "n5BgzgEVl4X8hH5UOdiPxjy7aaJt4MS2c4H4vNlAqOmXqOsJ7vdjVCdNhDXxHFNK"
 
 ogone:
