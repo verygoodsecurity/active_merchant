@@ -3,6 +3,17 @@ require 'securerandom'
 
 class RemoteNuveiAchTest < Test::Unit::TestCase
   def setup
+    # Declined Deposit and Declined Pre-approval
+    #
+    # NSF – Amount 1.27
+    # Declined – Amount 1.30
+    # Account No: 3666394279
+    # Routing No: 123456780
+    # Successful Deposit and Successful Pre-approval
+    #
+    # Success – Amount: 1.25
+    # Account No: 111111111
+    # Routing No: 123456780
     @gateway = NuveiAchGateway.new(fixtures(:nuvei))
     @amount = 100
     @credit_card = credit_card('4111111111111111')
