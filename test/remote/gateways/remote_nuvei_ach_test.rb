@@ -122,14 +122,18 @@ class RemoteNuveiAchTest < Test::Unit::TestCase
     options[:transaction_id] = generate_unique_id
     response                 = @gateway.purchase(@amount, @check, options)
 
-    expected_response                    = @example_successful_response.dup
-    expected_response['clientRequestId'] = options[:order_id]
-    expected_response['clientUniqueId']  = options[:transaction_id]
-    expected_response['userTokenId']     = options[:user_token_id]
+    success_response = successful_purchase_response(
+      merchant_id:           @gateway.options[:merchant_id],
+      order_id:              options[:order_id],
+      client_request_id:     options[:transaction_id],
+      client_unique_id:      options[:transaction_id],
+      user_payment_option_id: options[:user_token_id],
+      session_token:         @example_successful_response[:session_token],
+      user_token_id:         options[:user_token_id],
+    )
 
-    # compare each key individually
-    expected_response.each do |key, value|
-      assert_equal expected_response[key], response.params[key], "key: #{key}"
+    success_response.each do |key, value|
+      assert_equal value, response.params[key], "key: #{key}"
     end
 
     assert_success response
