@@ -107,6 +107,14 @@ class RemoteNuveiAchTest < Test::Unit::TestCase
     }.deep_stringify_keys(&:to_sym)
   end
 
+  def test_create_session
+    # TODO: should login and create a session
+  end
+
+  def test_create_intent
+    # TODO: should create an intent
+  end
+
   def test_successful_purchase
     options                  = @options.dup
     options[:order_id]       = generate_unique_id
