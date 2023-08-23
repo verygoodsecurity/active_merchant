@@ -2,11 +2,11 @@
 module ActiveMerchant #:nodoc:
   module Billing #:nodoc:
     class NuveiAchGateway < Gateway
-      self.test_url = 'https://ppp-test.safecharge.com/ppp/api/v1/'
-      self.live_url = 'https://secure.safecharge.com/ppp/api/v1/'
+      self.test_url         = 'https://ppp-test.safecharge.com/ppp/api/v1/'
+      self.live_url         = 'https://secure.safecharge.com/ppp/api/v1/'
       self.default_currency = 'USD'
-      self.homepage_url = 'https://www.nuvei.com/'
-      self.display_name = 'Nuvei'
+      self.homepage_url     = 'https://www.nuvei.com/'
+      self.display_name     = 'Nuvei'
 
       def initialize(options = {})
         requires!(options, :merchant_id, :merchant_site_id, :secret)
@@ -14,37 +14,26 @@ module ActiveMerchant #:nodoc:
         super
       end
 
-      def purchase(money, payment, options = {})
-        post = init_post
-        session = open_session
-        if session['sessionToken'].blank?
-          failed_session_creation(session)
-        else
-          add_session(post, session)
-          add_payment(post, money, payment, options)
-          add_device_details(post, options)
-          add_billing_address(post, options)
-          post[:clientUniqueId] = options[:transaction_id]
-          commit('payment', post, options)
-        end
-      end
-
-      def refund(money, authorization, options = {})
-        trans_id = get_trans_id(authorization)
-        post = init_post(options)
-        timestamp = Time.now.utc.strftime("%Y%m%d%H%M%S")
-        add_trans_details(post, money, options, timestamp)
-        add_refund_details(post, trans_id, timestamp)
-        commit('refundTransaction', post, options)
-      end
-
-      def credit(money, payment, options = {})
-        post = init_post(options)
-        timestamp = Time.now.utc.strftime("%Y%m%d%H%M%S")
-        add_trans_details(post, money, options, timestamp)
+      # Creates a session token for the user
+      # {
+      #     "merchantId":"<your merchantId goes here>",
+      #     "merchantSiteId":"<your merchantSiteId goes here>",
+      #     "clientUniqueId":"<unique transaction ID in merchant system>",
+      #     "clientRequestId":"<unique request ID in merchant system>",
+      #     "currency":"USD",
+      #     "amount":"200",
+      #     "timeStamp":"<YYYYMMDDHHmmss>",
+      #     "checksum":"<calculated checksum>"
+      # }
+      def create_order(amount, options = {})
+        timestamp       = Time.now.utc.strftime("%Y%m%d%H%M%S")
+        post            = init_post
+        post[:amount]   = amount(amount)
+        post[:currency] = currency(amount)
+        add_trans_details(post, amount, options, timestamp)
         add_device_details(post, options)
-        add_payout_details(post, options, timestamp)
-        commit('payout', post, options)
+        post[:checksum] = get_payment_checksum(post[:clientRequestId], post[:amount], post[:currency], timestamp)
+        commit('openOrder', post, options)
       end
 
       private
@@ -54,49 +43,22 @@ module ActiveMerchant #:nodoc:
       end
 
       def open_session
-        timestamp = Time.now.utc.strftime("%Y%m%d%H%M%S")
-        checksum = get_session_checksum(timestamp)
+        timestamp  = Time.now.utc.strftime("%Y%m%d%H%M%S")
+        checksum   = get_session_checksum(timestamp)
         parameters = {
-          :merchantId => @merchant_id,
+          :merchantId     => @merchant_id,
           :merchantSiteId => @merchant_site_id,
-          :timeStamp => timestamp,
-          :checksum => checksum
+          :timeStamp      => timestamp,
+          :checksum       => checksum
         }
 
         begin
           raw_response = ssl_post(url('getSessionToken'), post_data(parameters), request_headers(options))
-          response = parse(raw_response)
+          response     = parse(raw_response)
         rescue ResponseError => e
           raw_response = e.response.body
-          response = parse(raw_response)
+          response     = parse(raw_response)
         end
-      end
-
-      def failed_session_creation(response)
-        Response.new(
-          false,
-          "Failed to open session",
-          response,
-          test: test?
-        )
-      end
-
-      def get_payment_checksum (client_request_id, amount, currency, timestamp)
-        base = @merchant_id + @merchant_site_id + client_request_id +
-               amount.to_s + currency + timestamp + @secret
-        Digest::SHA256.hexdigest base
-      end
-
-      def get_payout_checksum (client_request_id, amount, currency, timestamp)
-        base = @merchant_id + @merchant_site_id + client_request_id +
-               amount.to_s + currency + timestamp + @secret
-        Digest::SHA256.hexdigest base
-      end
-
-      def get_refund_checksum (client_request_id, amount, currency, transaction_id, timestamp)
-        base = @merchant_id + @merchant_site_id + client_request_id +
-               amount.to_s + currency + transaction_id + timestamp + @secret
-        Digest::SHA256.hexdigest base
       end
 
       def get_session_checksum (timestamp)
@@ -123,17 +85,10 @@ module ActiveMerchant #:nodoc:
         }
       end
 
-      def add_refund_details(post, authorization, timestamp)
-        post[:relatedTransactionId] = authorization
-        post[:checksum] = get_refund_checksum(post[:clientRequestId], post[:amount], post[:currency], post[:relatedTransactionId], timestamp)
-      end
-
-      def add_payment (post, money, payment, options)
-        timestamp = Time.now.utc.strftime("%Y%m%d%H%M%S")
-        add_trans_details(post, money, options, timestamp)
-        add_payment_option(post, payment)
-        post[:checksum] = get_payment_checksum(post[:clientRequestId], post[:amount], post[:currency], timestamp)
-        post[:userTokenId] = options[:user_token_id]
+      def get_payment_checksum (client_request_id, amount, currency, timestamp)
+        base = @merchant_id + @merchant_site_id + client_request_id +
+          amount.to_s + currency + timestamp + @secret
+        Digest::SHA256.hexdigest base
       end
 
       def add_payment_option(post, payment)
@@ -151,36 +106,28 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_trans_details(post, money, options, timestamp)
-        post[:amount] = amount(money)
+        post[:amount]          = amount(money)
         post[:clientRequestId] = options[:order_id].to_s
-        post[:currency] = options[:currency] || currency(money)
-        post[:timeStamp] = timestamp
-      end
-
-      def add_payout_details(post, options, timestamp)
-        post[:userTokenId] = options[:user_token_id]
-        post[:userPaymentOption] = {
-          :userPaymentOptionId => options[:user_payment_option_id]
-        }
-        post[:checksum] = get_payout_checksum(post[:clientRequestId], post[:amount], post[:currency], timestamp)
+        post[:currency]        = options[:currency] || currency(money)
+        post[:timeStamp]       = timestamp
       end
 
       def add_merchant_options(post)
-        post[:merchantId] = @merchant_id
+        post[:merchantId]     = @merchant_id
         post[:merchantSiteId] = @merchant_site_id
       end
 
       def parse(body)
-        body.blank? ? {} :  JSON.parse(body)
+        body.blank? ? {} : JSON.parse(body)
       end
 
       def commit(action, parameters, options)
         begin
           raw_response = ssl_post(url(action), post_data(parameters), request_headers(options))
-          response = parse(raw_response)
+          response     = parse(raw_response)
         rescue ResponseError => e
           raw_response = e.response.body
-          response = parse(raw_response)
+          response     = parse(raw_response)
         end
 
         success = success_from(action, response, options)
@@ -189,18 +136,8 @@ module ActiveMerchant #:nodoc:
           message_from(success, response),
           response,
           authorization: authorization_from(success, action, response),
-          test: test?,
-          avs_result: AVSResult.new(code: avs_code_from(response)),
-          cvv_result: CVVResult.new(cvv_result_from(response))
+          test:          test?,
         )
-      end
-
-      def avs_code_from(response)
-        response.dig('paymentOption', 'card', 'avsCode')
-      end
-
-      def cvv_result_from(response)
-        response.dig('paymentOption', 'card', 'cvv2Reply')
       end
 
       def url(action)
@@ -219,12 +156,11 @@ module ActiveMerchant #:nodoc:
 
       def success_from(action, response, options)
         case action.to_s
-        when 'payment', 'refundTransaction', 'payout'
-          response['status'] == "SUCCESS" and response['transactionStatus'] == "APPROVED"
-        else
-          false
+          when 'payment', 'refundTransaction', 'payout'
+            response['status'] == "SUCCESS" and response['transactionStatus'] == "APPROVED"
+          else
+            false
         end
-
       end
 
       def message_from(success, response)
@@ -249,7 +185,7 @@ module ActiveMerchant #:nodoc:
           # card in the future. This value is blank if userTokenId is blank when
           # posting the payment.
           authorization = response['transactionId'].to_s
-          upo_id = response.dig('paymentOption', 'userPaymentOptionId')
+          upo_id        = response.dig('paymentOption', 'userPaymentOptionId')
           if !upo_id.blank?
             authorization += "|" + upo_id
           end
@@ -272,7 +208,6 @@ module ActiveMerchant #:nodoc:
       def post_data(parameters = {})
         JSON.generate(parameters)
       end
-
     end
   end
 end
