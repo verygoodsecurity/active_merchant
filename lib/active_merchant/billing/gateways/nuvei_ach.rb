@@ -26,10 +26,12 @@ module ActiveMerchant #:nodoc:
       #     "checksum":"<calculated checksum>"
       # }
       def create_order(amount, options = {})
-        timestamp       = Time.now.utc.strftime("%Y%m%d%H%M%S")
-        post            = init_post
-        post[:amount]   = amount(amount)
-        post[:currency] = currency(amount)
+        timestamp             = Time.now.utc.strftime("%Y%m%d%H%M%S")
+        post                  = init_post
+        post[:amount]         = amount(amount)
+        post[:currency]       = currency(amount)
+        post[:clientUniqueId] = options[:transaction_id].to_s
+        post[:userTokenId]    = options[:customer_id].to_s
         add_trans_details(post, amount, options, timestamp)
         add_device_details(post, options)
         post[:checksum] = get_payment_checksum(post[:clientRequestId], post[:amount], post[:currency], timestamp)
@@ -108,6 +110,7 @@ module ActiveMerchant #:nodoc:
       def add_trans_details(post, money, options, timestamp)
         post[:amount]          = amount(money)
         post[:clientRequestId] = options[:order_id].to_s
+        post[:clientUniqueId]  = options[:transaction_id].to_s
         post[:currency]        = options[:currency] || currency(money)
         post[:timeStamp]       = timestamp
       end
@@ -166,8 +169,8 @@ module ActiveMerchant #:nodoc:
       end
 
       def message_from(success, response)
-        return 'Succeeded'               if     success
-        return response['reason']        unless response['reason'].to_s.empty?
+        return 'Succeeded' if success
+        return response['reason'] unless response['reason'].to_s.empty?
         return response['gwErrorReason'] unless response['gwErrorReason'].to_s.empty?
         'Failed'
       end

@@ -6,11 +6,12 @@ class RemoteNuveiAchTest < Test::Unit::TestCase
     @gateway = NuveiAchGateway.new(fixtures(:nuvei_ach))
     @amount  = 125
     @options = {
-      order_id:        1,
       billing_address: address,
+      customer_id:     'd3btor-1d',
       description:     'Fake purchase',
+      email:           'test@test.com',
       ip:              '127.0.0.1',
-      email:           'test@test.com'
+      transaction_id:  'tr4ns4ct10n-1d'
     }
   end
 
@@ -19,36 +20,47 @@ class RemoteNuveiAchTest < Test::Unit::TestCase
   end
 
   def test_successful_create_order
-    @gateway.expects(:ssl_request).returns(successful_create_order_response.to_json)
     # TODO: should create an order
-    options                  = @options.dup
-    options[:order_id]       = generate_unique_id
-    options[:user_token_id]  = 'd3btor-1d'
-    options[:transaction_id] = 'tr4ns4ct10n-1d'
-    response                 = @gateway.create_order(@amount, options)
+    # @gateway.expects(:ssl_request).returns(successful_create_order_response.to_json) unless ENV['LIVE_TEST'] == 'true'
+    options            = @options.dup
+    options[:order_id] = generate_unique_id
+    response           = @gateway.create_order(@amount, options)
 
-    successful_create_order_response.each do |key, value|
-      assert_equal value, response.params[key.to_s], "key: #{key}"
-    end
-
+    assert_instance_of Response, response
     assert_success response
-    assert_equal 'Succeeded', response.message
+
+    # These are based on the options
+    assert_equal options[:transaction_id],            response.params['clientUniqueId']
+    assert_equal 0,                                   response.params['errCode']
+    assert_equal @gateway.options[:merchant_id],      response.params['merchantId']
+    assert_equal @gateway.options[:merchant_site_id], response.params['merchantSiteId']
+    assert_equal options[:order_id],                  response.params['clientRequestId']
+    assert_equal options[:customer_id],               response.params['userTokenId']
+
+    # These are always unique
+    assert response.params['sessionToken']
+    assert response.params['clientRequestId']
+    assert response.params['internalRequestId']
+    assert response.params['orderId']
   end
 
   def successful_create_order_response(
-    client_request_id: "1eac1321fadfbece95f7861333129847",
-    err_code: "0",
+    client_request_id:   "1eac1321fadfbece95f7861333129847",
+    client_unique_id:    "tr4ns4ct10n-1d",
+    err_code:            "0",
     internal_request_id: "759508088",
-    merchant_id: "6681232478277060313",
-    merchant_site_id: "239358",
-    order_id: "385235308",
-    reason: "",
-    session_token: "a5e3051a-7e97-45eb-a602-328b2eb9fb60",
-    status: "SUCCESS",
-    version: "1.0"
+    merchant_id:         "6681232478277060313",
+    merchant_site_id:    "239358",
+    order_id:            "385235308",
+    reason:              "",
+    session_token:       "a5e3051a-7e97-45eb-a602-328b2eb9fb60",
+    status:              "SUCCESS",
+    user_token_id:       'd3btor-1d',
+    version:             "1.0"
   )
     {
       clientRequestId:   "#{client_request_id}",
+      clientUniqueId:    "#{client_unique_id}",
       errCode:           "#{err_code}",
       internalRequestId: "#{internal_request_id}",
       merchantId:        "#{merchant_id}",
@@ -57,6 +69,7 @@ class RemoteNuveiAchTest < Test::Unit::TestCase
       reason:            "#{reason}",
       sessionToken:      "#{session_token}",
       status:            "#{status}",
+      userTokenId:       "#{user_token_id}",
       version:           "#{version}",
     }
   end
