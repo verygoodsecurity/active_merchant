@@ -130,7 +130,7 @@ module ActiveMerchant #:nodoc:
           response     = parse(raw_response)
         end
 
-        success = success_from(action, response, options)
+        success = action_from(action, response)
         Response.new(
           success,
           message_from(success, response),
@@ -154,25 +154,22 @@ module ActiveMerchant #:nodoc:
         }
       end
 
-      def success_from(action, response, options)
-        case action.to_s
-          when 'payment', 'refundTransaction', 'payout'
-            response['status'] == "SUCCESS" and response['transactionStatus'] == "APPROVED"
-          else
-            false
-        end
+      def action_from(action, response)
+        success_conditions = {
+          'openOrder'         => response['status'] == "SUCCESS",
+          'payment'           => response['status'] == "SUCCESS" && response['transactionStatus'] == "APPROVED",
+          'payout'            => response['status'] == "SUCCESS" && response['transactionStatus'] == "APPROVED",
+          'refundTransaction' => response['status'] == "SUCCESS" && response['transactionStatus'] == "APPROVED",
+        }
+
+        success_conditions[action.to_s] || false
       end
 
       def message_from(success, response)
-        if success
-          'Succeeded'
-        elsif !response['reason'].blank?
-          response['reason']
-        elsif !response['gwErrorReason'].blank?
-          response['gwErrorReason']
-        else
-          'Failed'
-        end
+        return 'Succeeded'               if     success
+        return response['reason']        unless response['reason'].to_s.empty?
+        return response['gwErrorReason'] unless response['gwErrorReason'].to_s.empty?
+        'Failed'
       end
 
       def authorization_from(success, action, response)

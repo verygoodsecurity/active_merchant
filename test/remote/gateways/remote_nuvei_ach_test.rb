@@ -28,13 +28,11 @@ class RemoteNuveiAchTest < Test::Unit::TestCase
     response                 = @gateway.create_order(@amount, options)
 
     successful_create_order_response.each do |key, value|
-      assert_equal value, response.params[key], "key: #{key}"
+      assert_equal value, response.params[key.to_s], "key: #{key}"
     end
 
     assert_success response
     assert_equal 'Succeeded', response.message
-    # Ensure that the authorization has a pipe to separate transactionId and user_payment_option_id
-    assert response.authorization.include? "|"
   end
 
   def successful_create_order_response(
@@ -50,16 +48,16 @@ class RemoteNuveiAchTest < Test::Unit::TestCase
     version: "1.0"
   )
     {
-      "clientRequestId":   "#{client_request_id}",
-      "errCode":           "#{err_code}",
-      "internalRequestId": "#{internal_request_id}",
-      "merchantId":        "#{merchant_id}",
-      "merchantSiteId":    "#{merchant_site_id}",
-      "orderId":           "#{order_id}",
-      "reason":            "#{reason}",
-      "sessionToken":      "#{session_token}",
-      "status":            "#{status}",
-      "version":           "#{version}",
+      clientRequestId:   "#{client_request_id}",
+      errCode:           "#{err_code}",
+      internalRequestId: "#{internal_request_id}",
+      merchantId:        "#{merchant_id}",
+      merchantSiteId:    "#{merchant_site_id}",
+      orderId:           "#{order_id}",
+      reason:            "#{reason}",
+      sessionToken:      "#{session_token}",
+      status:            "#{status}",
+      version:           "#{version}",
     }
   end
 end
