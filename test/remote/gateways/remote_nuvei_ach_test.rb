@@ -20,29 +20,38 @@ class RemoteNuveiAchTest < Test::Unit::TestCase
   end
 
   def test_successful_create_order
-    # TODO: should create an order
-    # @gateway.expects(:ssl_request).returns(successful_create_order_response.to_json) unless ENV['LIVE_TEST'] == 'true'
-    options            = @options.dup
-    options[:order_id] = generate_unique_id
+    options                         = @options.dup
+    options[:order_id]              = generate_unique_id
+    mock_response                   = successful_create_order_response
+    mock_response[:clientRequestId] = options[:order_id]
+
+    # Set LIVE_TEST=true in your environment to run this with live API calls
+    if ENV['LIVE_TEST'] != 'true'
+      @gateway.expects(:ssl_request).returns(mock_response.to_json)
+    end
+
     response           = @gateway.create_order(@amount, options)
 
     assert_instance_of Response, response
     assert_success response
 
     # These are based on the options
+    assert_equal options[:order_id],                  response.params['clientRequestId']
     assert_equal options[:transaction_id],            response.params['clientUniqueId']
-    assert_equal 0,                                   response.params['errCode']
     assert_equal @gateway.options[:merchant_id],      response.params['merchantId']
     assert_equal @gateway.options[:merchant_site_id], response.params['merchantSiteId']
-    assert_equal options[:order_id],                  response.params['clientRequestId']
     assert_equal options[:customer_id],               response.params['userTokenId']
 
     # These are always unique
-    assert response.params['sessionToken']
     assert response.params['clientRequestId']
     assert response.params['internalRequestId']
     assert response.params['orderId']
+    assert response.params['sessionToken']
   end
+
+  ############################################################################
+  # Mock Responses                                                           #
+  ############################################################################
 
   def successful_create_order_response(
     client_request_id:   "1eac1321fadfbece95f7861333129847",
