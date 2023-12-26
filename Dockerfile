@@ -1,4 +1,4 @@
-FROM ruby:2.7-alpine
+FROM ruby:3-alpine
 
 RUN apk update && apk add --no-cache build-base libxml2-dev curl
 
