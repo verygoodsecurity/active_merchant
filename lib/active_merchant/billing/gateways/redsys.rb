@@ -39,7 +39,7 @@ module ActiveMerchant #:nodoc:
       self.live_url = 'https://sis.redsys.es/sis/operaciones'
       self.test_url = 'https://sis-t.redsys.es:25443/sis/operaciones'
 
-      self.supported_countries = ['ES']
+      self.supported_countries = %w[ES FR GB IT PL PT]
       self.default_currency    = 'EUR'
       self.money_format        = :cents
 
@@ -266,14 +266,7 @@ module ActiveMerchant #:nodoc:
       end
 
       def verify(creditcard, options = {})
-        if options[:sca_exemption_behavior_override] == 'endpoint_and_ntid'
-          purchase(0, creditcard, options)
-        else
-          MultiResponse.run(:use_first_response) do |r|
-            r.process { authorize(100, creditcard, options) }
-            r.process(:ignore_result) { void(r.authorization, options) }
-          end
-        end
+        purchase(0, creditcard, options)
       end
 
       def supports_scrubbing
@@ -538,6 +531,7 @@ module ActiveMerchant #:nodoc:
             xml.DS_MERCHANT_COF_INI data[:DS_MERCHANT_COF_INI]
             xml.DS_MERCHANT_COF_TYPE data[:DS_MERCHANT_COF_TYPE]
             xml.DS_MERCHANT_COF_TXNID data[:DS_MERCHANT_COF_TXNID] if data[:DS_MERCHANT_COF_TXNID]
+            xml.DS_MERCHANT_DIRECTPAYMENT 'false' if options[:stored_credential][:initial_transaction]
           end
         end
       end

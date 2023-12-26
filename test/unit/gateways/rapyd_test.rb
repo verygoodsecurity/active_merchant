@@ -5,6 +5,7 @@ class RapydTest < Test::Unit::TestCase
 
   def setup
     @gateway = RapydGateway.new(secret_key: 'secret_key', access_key: 'access_key')
+    @gateway_payment_redirect = RapydGateway.new(secret_key: 'secret_key', access_key: 'access_key', url_override: 'payment_redirect')
     @credit_card = credit_card
     @check = check
     @amount = 100
@@ -18,7 +19,8 @@ class RapydTest < Test::Unit::TestCase
       description: 'Describe this transaction',
       statement_descriptor: 'Statement Descriptor',
       email: 'test@example.com',
-      billing_address: address(name: 'Jim Reynolds')
+      billing_address: address(name: 'Jim Reynolds'),
+      order_id: '987654321'
     }
 
     @metadata = {
@@ -41,13 +43,21 @@ class RapydTest < Test::Unit::TestCase
     @ewallet_id = 'ewallet_1a867a32b47158b30a8c17d42f12f3f1'
 
     @address_object = address(line_1: '123 State Street', line_2: 'Apt. 34', phone_number: '12125559999')
+  end
 
-    @customer_object = {
-      name: 'John Doe',
-      phone_number: '1234567890',
-      email: 'est@example.com',
-      addresses: [@address_object]
-    }
+  def test_request_headers_building
+    @options.merge!(idempotency_key: '123')
+
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request(skip_response: true) do |_method, _endpoint, _data, headers|
+      assert_equal 'application/json', headers['Content-Type']
+      assert_equal '123', headers['idempotency']
+      assert_equal 'access_key', headers['access_key']
+      assert headers['salt']
+      assert headers['signature']
+      assert headers['timestamp']
+    end
   end
 
   def test_successful_purchase
@@ -57,6 +67,17 @@ class RapydTest < Test::Unit::TestCase
       assert_equal JSON.parse(data)['address']['name'], 'Joe John-ston'
     end.respond_with(successful_purchase_response)
 
+    assert_success response
+    assert_equal 'payment_716ce0efc63aa8d91579e873d29d9d5e', response.authorization.split('|')[0]
+  end
+
+  def test_successful_purchase_without_cvv
+    @credit_card.verification_value = nil
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      assert_match(/"number":"4242424242424242","expiration_month":"9","expiration_year":"2024","name":"Longbob Longsen/, data)
+    end.respond_with(successful_purchase_response)
     assert_success response
     assert_equal 'payment_716ce0efc63aa8d91579e873d29d9d5e', response.authorization.split('|')[0]
   end
@@ -94,6 +115,21 @@ class RapydTest < Test::Unit::TestCase
       assert_match(/"error_payment_url":"www.google.com"/, data)
       assert_match(/"description":"Describe this transaction"/, data)
       assert_match(/"statement_descriptor":"Statement Descriptor"/, data)
+      assert_match(/"merchant_reference_id":"987654321"/, data)
+    end.respond_with(successful_authorize_response)
+
+    assert_success response
+  end
+
+  def test_successful_purchase_with_explicit_merchant_reference_id
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options.merge({ merchant_reference_id: '99988877776' }))
+    end.check_request do |_method, _endpoint, data, _headers|
+      assert_match(/"complete_payment_url":"www.google.com"/, data)
+      assert_match(/"error_payment_url":"www.google.com"/, data)
+      assert_match(/"description":"Describe this transaction"/, data)
+      assert_match(/"statement_descriptor":"Statement Descriptor"/, data)
+      assert_match(/"merchant_reference_id":"99988877776"/, data)
     end.respond_with(successful_authorize_response)
 
     assert_success response
@@ -111,6 +147,74 @@ class RapydTest < Test::Unit::TestCase
       assert_equal request['payment_method']['fields']['network_reference_id'], @options[:stored_credential][:network_transaction_id]
       assert_equal request['initiation_type'], @options[:stored_credential][:reason_type]
     end.respond_with(successful_purchase_response)
+  end
+
+  def test_successful_purchase_with_network_transaction_id_and_initiation_type_fields
+    @options[:network_transaction_id] = '54321'
+    @options[:initiation_type] = 'customer_present'
+
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_equal request['payment_method']['fields']['network_reference_id'], @options[:network_transaction_id]
+      assert_equal request['initiation_type'], @options[:initiation_type]
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_success_purchase_with_recurrence_type
+    @options[:recurrence_type] = 'recurring'
+
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_equal request['payment_method']['fields']['recurrence_type'], @options[:recurrence_type]
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_successful_purchase_with_3ds_global
+    @options[:three_d_secure] = {
+      required: true,
+      version: '2.1.0'
+    }
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_equal request['payment_method_options']['3d_required'], true
+      assert_equal request['payment_method_options']['3d_version'], '2.1.0'
+      assert request['complete_payment_url']
+      assert request['error_payment_url']
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_successful_purchase_with_3ds_gateway_specific
+    @options.merge!(execute_threed: true, force_3d_secure: true)
+
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_equal request['payment_method_options']['3d_required'], true
+      assert_nil request['payment_method_options']['3d_version']
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_does_not_send_3ds_version_if_not_required
+    false_values = [false, nil, 'false', '']
+    @options[:execute_threed] = true
+
+    false_values.each do |value|
+      @options[:force_3d_secure] = value
+
+      stub_comms(@gateway, :ssl_request) do
+        @gateway.purchase(@amount, @credit_card, @options)
+      end.check_request do |_method, _endpoint, data, _headers|
+        request = JSON.parse(data)
+        assert_nil request['payment_method_options']
+      end.respond_with(successful_purchase_response)
+    end
   end
 
   def test_failed_purchase
@@ -217,6 +321,34 @@ class RapydTest < Test::Unit::TestCase
     assert_equal customer_id, unstore.params.dig('data', 'id')
   end
 
+  def test_send_receipt_email_and_customer_id_for_purchase
+    store = stub_comms(@gateway, :ssl_request) do
+      @gateway.store(@credit_card, @options)
+    end.respond_with(successful_store_response)
+
+    assert customer_id = store.params.dig('data', 'id')
+    assert card_id = store.params.dig('data', 'default_payment_method')
+
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, store.authorization, @options.merge(customer_id: customer_id))
+    end.check_request do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_equal request['receipt_email'], @options[:email]
+      assert_equal request['customer'], customer_id
+      assert_equal request['payment_method'], card_id
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_send_email_with_customer_object_for_purchase
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request(skip_response: true) do |_method, _endpoint, data, _headers|
+      request_body = JSON.parse(data)
+      assert request_body['customer']
+      assert_equal request_body['customer']['email'], @options[:email]
+    end
+  end
+
   def test_failed_purchase_without_customer_object
     @options[:pm_type] = 'us_debit_visa_card'
     @gateway.expects(:ssl_request).returns(failed_purchase_response)
@@ -227,14 +359,29 @@ class RapydTest < Test::Unit::TestCase
 
   def test_successful_purchase_with_customer_object
     stub_comms(@gateway, :ssl_request) do
-      @options[:customer] = @customer_object
       @options[:pm_type] = 'us_debit_mastercard_card'
       @gateway.purchase(@amount, @credit_card, @options)
     end.check_request(skip_response: true) do |_method, _endpoint, data, _headers|
       assert_match(/"name":"Jim Reynolds"/, data)
       assert_match(/"email":"test@example.com"/, data)
       assert_match(/"phone_number":"5555555555"/, data)
-      assert_match(/"address1":"456 My Street","address2":"Apt 1","company":"Widgets Inc","city":"Ottawa","state":"ON","zip":"K1C2N6","country":"CA"/, data)
+      assert_match(/"customer":/, data)
+    end
+  end
+
+  def test_successful_purchase_with_billing_address_phone_variations
+    stub_comms(@gateway, :ssl_request) do
+      @options[:pm_type] = 'us_debit_mastercard_card'
+      @gateway.purchase(@amount, @credit_card, { billing_address: { phone_number: '919.123.1234' } })
+    end.check_request(skip_response: true) do |_method, _endpoint, data, _headers|
+      assert_match(/"phone_number":"9191231234"/, data)
+    end
+
+    stub_comms(@gateway, :ssl_request) do
+      @options[:pm_type] = 'us_debit_mastercard_card'
+      @gateway.purchase(@amount, @credit_card, { billing_address: { phone: '919.123.1234' } })
+    end.check_request(skip_response: true) do |_method, _endpoint, data, _headers|
+      assert_match(/"phone_number":"9191231234"/, data)
     end
   end
 
@@ -248,6 +395,45 @@ class RapydTest < Test::Unit::TestCase
     end.respond_with(successful_store_response)
 
     assert_success response
+  end
+
+  def test_payment_urls_correctly_nested_by_operation
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.store(@credit_card, @options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request_body = JSON.parse(data)
+      assert_equal @options[:complete_payment_url], request_body['payment_method']['complete_payment_url']
+      assert_equal @options[:error_payment_url], request_body['payment_method']['error_payment_url']
+    end.respond_with(successful_store_response)
+
+    assert_success response
+
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request_body = JSON.parse(data)
+      assert_equal @options[:complete_payment_url], request_body['complete_payment_url']
+      assert_equal @options[:error_payment_url], request_body['error_payment_url']
+    end.respond_with(successful_store_response)
+
+    assert_success response
+  end
+
+  def test_purchase_with_customer_and_card_id
+    store = stub_comms(@gateway, :ssl_request) do
+      @gateway.store(@credit_card, @options)
+    end.respond_with(successful_store_response)
+
+    assert customer_id = store.params.dig('data', 'id')
+    assert card_id = store.params.dig('data', 'default_payment_method')
+
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, store.authorization, @options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request_body = JSON.parse(data)
+      assert_equal request_body['customer'], customer_id
+      assert_equal request_body['payment_method'], card_id
+    end.respond_with(successful_purchase_response)
   end
 
   def test_three_d_secure
@@ -273,6 +459,86 @@ class RapydTest < Test::Unit::TestCase
   def test_scrub
     assert @gateway.supports_scrubbing?
     assert_equal @gateway.scrub(pre_scrubbed), post_scrubbed
+  end
+
+  def test_not_send_cvv_with_empty_value
+    @credit_card.verification_value = ''
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request(skip_response: true) do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_nil request['payment_method']['fields']['cvv']
+    end
+  end
+
+  def test_not_send_cvv_with_nil_value
+    @credit_card.verification_value = nil
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request(skip_response: true) do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_nil request['payment_method']['fields']['cvv']
+    end
+  end
+
+  def test_not_send_cvv_for_recurring_transactions
+    @options[:stored_credential] = {
+      reason_type: 'recurring',
+      network_transaction_id: '12345'
+    }
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request(skip_response: true) do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_nil request['payment_method']['fields']['cvv']
+    end
+  end
+
+  def test_not_send_network_reference_id_for_recurring_transactions
+    @options[:stored_credential] = {
+      reason_type: 'recurring',
+      network_transaction_id: nil
+    }
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request(skip_response: true) do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_nil request['payment_method']['fields']['network_reference_id']
+    end
+  end
+
+  def test_not_send_customer_object_for_recurring_transactions
+    @options[:stored_credential] = {
+      reason_type: 'recurring',
+      network_transaction_id: '12345'
+    }
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, @credit_card, @options)
+    end.check_request(skip_response: true) do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_nil request['customer']
+    end
+  end
+
+  def test_successful_purchase_for_payment_redirect_url
+    @gateway_payment_redirect.expects(:ssl_request).returns(successful_purchase_response)
+    response = @gateway_payment_redirect.purchase(@amount, @credit_card, @options)
+    assert_success response
+  end
+
+  def test_use_proper_url_for_payment_redirect_url
+    url = @gateway_payment_redirect.send(:url, 'payments', 'payment_redirect')
+    assert_equal url, 'https://sandboxpayment-redirect.rapyd.net/v1/payments'
+  end
+
+  def test_use_proper_url_for_default_url
+    url = @gateway_payment_redirect.send(:url, 'payments')
+    assert_equal url, 'https://sandboxapi.rapyd.net/v1/payments'
+  end
+
+  def test_wrong_url_for_payment_redirect_url
+    url = @gateway_payment_redirect.send(:url, 'refund', 'payment_redirect')
+    assert_no_match %r{https://sandboxpayment-redirect.rapyd.net/v1/}, url
   end
 
   private

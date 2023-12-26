@@ -7,14 +7,16 @@ module ActiveMerchant #:nodoc:
     class StripeGateway < Gateway
       self.live_url = 'https://api.stripe.com/v1/'
 
+      # Docs on AVS codes: https://en.wikipedia.org/w/index.php?title=Address_verification_service&_ga=2.97570079.1027215965.1655989706-2008268124.1655989706#AVS_response_codes
+      # possible response values: https://stripe.com/docs/api/payment_methods/object#payment_method_object-card-checks
       AVS_CODE_TRANSLATOR = {
-        'line1: pass, zip: pass' => 'Y',
         'line1: pass, zip: fail' => 'A',
         'line1: pass, zip: unchecked' => 'B',
-        'line1: fail, zip: pass' => 'Z',
+        'line1: unchecked, zip: unchecked' => 'I',
         'line1: fail, zip: fail' => 'N',
         'line1: unchecked, zip: pass' => 'P',
-        'line1: unchecked, zip: unchecked' => 'I'
+        'line1: pass, zip: pass' => 'Y',
+        'line1: fail, zip: pass' => 'Z'
       }
 
       CVC_CODE_TRANSLATOR = {
@@ -652,18 +654,19 @@ module ActiveMerchant #:nodoc:
         end
       end
 
-      def headers(options = {})
-        key = options[:key] || @api_key
-        idempotency_key = options[:idempotency_key]
+      def key(options = {})
+        options[:key] || @api_key
+      end
 
+      def headers(options = {})
         headers = {
-          'Authorization' => 'Basic ' + Base64.strict_encode64(key.to_s + ':').strip,
+          'Authorization' => 'Basic ' + Base64.strict_encode64(key(options).to_s + ':').strip,
           'User-Agent' => "Stripe/v1 ActiveMerchantBindings/#{ActiveMerchant::VERSION}",
           'Stripe-Version' => api_version(options),
           'X-Stripe-Client-User-Agent' => stripe_client_user_agent(options),
           'X-Stripe-Client-User-Metadata' => { ip: options[:ip] }.to_json
         }
-        headers['Idempotency-Key'] = idempotency_key if idempotency_key
+        headers['Idempotency-Key'] = options[:idempotency_key] if options[:idempotency_key]
         headers['Stripe-Account'] = options[:stripe_account] if options[:stripe_account]
         headers
       end
@@ -694,14 +697,18 @@ module ActiveMerchant #:nodoc:
 
       def commit(method, url, parameters = nil, options = {})
         add_expand_parameters(parameters, options) if parameters
+
+        return Response.new(false, 'Invalid API Key provided') unless key_valid?(options)
+
         response = api_request(method, url, parameters, options)
         response['webhook_id'] = options[:webhook_id] if options[:webhook_id]
         success = success_from(response, options)
 
-        card = card_from_response(response)
-        avs_code = AVS_CODE_TRANSLATOR["line1: #{card['address_line1_check']}, zip: #{card['address_zip_check']}"]
-        cvc_code = CVC_CODE_TRANSLATOR[card['cvc_check']]
-        Response.new(success,
+        card_checks = card_from_response(response)
+        avs_code = AVS_CODE_TRANSLATOR["line1: #{card_checks['address_line1_check']}, zip: #{card_checks['address_zip_check'] || card_checks['address_postal_code_check']}"]
+        cvc_code = CVC_CODE_TRANSLATOR[card_checks['cvc_check']]
+        Response.new(
+          success,
           message_from(success, response),
           response,
           test: response_is_test?(response),
@@ -709,7 +716,20 @@ module ActiveMerchant #:nodoc:
           avs_result: { code: avs_code },
           cvv_result: cvc_code,
           emv_authorization: emv_authorization_from_response(response),
-          error_code: success ? nil : error_code_from(response))
+          error_code: success ? nil : error_code_from(response)
+        )
+      end
+
+      def key_valid?(options)
+        return true unless test?
+
+        %w(sk rk).each do |k|
+          if key(options).start_with?(k)
+            return false unless key(options).start_with?("#{k}_test")
+          end
+        end
+
+        true
       end
 
       def authorization_from(success, url, method, response)
@@ -767,7 +787,8 @@ module ActiveMerchant #:nodoc:
       end
 
       def card_from_response(response)
-        response['card'] || response['active_card'] || response['source'] || {}
+        # StripePI puts the AVS and CVC check significantly deeper into the response object
+        response['card'] || response['active_card'] || response['source'] || response.dig('charges', 'data', 0, 'payment_method_details', 'card', 'checks') || {}
       end
 
       def emv_authorization_from_response(response)

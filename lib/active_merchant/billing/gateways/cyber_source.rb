@@ -33,6 +33,15 @@ module ActiveMerchant #:nodoc:
         discover: 'pb',
         diners_club: 'pb'
       }.freeze
+      THREEDS_EXEMPTIONS = {
+        authentication_outage: 'authenticationOutageExemptionIndicator',
+        corporate_card: 'secureCorporatePaymentIndicator',
+        delegated_authentication: 'delegatedAuthenticationExemptionIndicator',
+        low_risk: 'riskAnalysisExemptionIndicator',
+        low_value: 'lowValueExemptionIndicator',
+        stored_credential: 'stored_credential',
+        trusted_merchant: 'trustedMerchantExemptionIndicator'
+      }
       DEFAULT_COLLECTION_INDICATOR = 2
 
       self.supported_cardtypes = %i[visa master american_express discover diners_club jcb dankort maestro elo]
@@ -130,6 +139,11 @@ module ActiveMerchant #:nodoc:
         r701: 'Export bill_country/ship_country match',
         r702: 'Export email_country match',
         r703: 'Export hostname_country/ip_country match'
+      }
+
+      @@payment_solution = {
+        apple_pay: '001',
+        google_pay: '012'
       }
 
       # These are the options that can be used when creating a new CyberSource
@@ -322,6 +336,7 @@ module ActiveMerchant #:nodoc:
         add_airline_data(xml, options)
         add_sales_slip_number(xml, options)
         add_payment_network_token(xml) if network_tokenization?(creditcard_or_reference)
+        add_payment_solution(xml, creditcard_or_reference.source) if network_tokenization?(creditcard_or_reference)
         add_tax_management_indicator(xml, options)
         add_stored_credential_subsequent_auth(xml, options)
         add_issuer_additional_data(xml, options)
@@ -393,6 +408,7 @@ module ActiveMerchant #:nodoc:
           add_airline_data(xml, options)
           add_sales_slip_number(xml, options)
           add_payment_network_token(xml) if network_tokenization?(payment_method_or_reference)
+          add_payment_solution(xml, payment_method_or_reference.source) if network_tokenization?(payment_method_or_reference)
           add_tax_management_indicator(xml, options)
           add_stored_credential_subsequent_auth(xml, options)
           add_issuer_additional_data(xml, options)
@@ -519,11 +535,9 @@ module ActiveMerchant #:nodoc:
       def add_business_rules_data(xml, payment_method, options)
         prioritized_options = [options, @options]
 
-        unless network_tokenization?(payment_method)
-          xml.tag! 'businessRules' do
-            xml.tag!('ignoreAVSResult', 'true') if extract_option(prioritized_options, :ignore_avs).to_s == 'true'
-            xml.tag!('ignoreCVResult', 'true') if extract_option(prioritized_options, :ignore_cvv).to_s == 'true'
-          end
+        xml.tag! 'businessRules' do
+          xml.tag!('ignoreAVSResult', 'true') if extract_option(prioritized_options, :ignore_avs).to_s == 'true'
+          xml.tag!('ignoreCVResult', 'true') if extract_option(prioritized_options, :ignore_cvv).to_s == 'true'
         end
       end
 
@@ -551,7 +565,7 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_merchant_data(xml, options)
-        xml.tag! 'merchantID', @options[:login]
+        xml.tag! 'merchantID', options[:merchant_id] || @options[:login]
         xml.tag! 'merchantReferenceCode', options[:order_id] || generate_unique_id
         xml.tag! 'clientLibrary', 'Ruby Active Merchant'
         xml.tag! 'clientLibraryVersion', VERSION
@@ -672,6 +686,12 @@ module ActiveMerchant #:nodoc:
         end
       end
 
+      def add_payment_solution(xml, source)
+        return unless (payment_solution = @@payment_solution[source])
+
+        xml.tag! 'paymentSolution', payment_solution
+      end
+
       def add_issuer_additional_data(xml, options)
         return unless options[:issuer_additional_data]
 
@@ -705,8 +725,8 @@ module ActiveMerchant #:nodoc:
       def add_check(xml, check, options)
         xml.tag! 'check' do
           xml.tag! 'accountNumber', check.account_number
-          xml.tag! 'accountType', check.account_type[0]
-          xml.tag! 'bankTransitNumber', check.routing_number
+          xml.tag! 'accountType', check.account_type == 'checking' ? 'C' : 'S'
+          xml.tag! 'bankTransitNumber', format_routing_number(check.routing_number, options)
           xml.tag! 'secCode', options[:sec_code] if options[:sec_code]
         end
       end
@@ -725,13 +745,26 @@ module ActiveMerchant #:nodoc:
           xml.tag! 'ccAuthService', { 'run' => 'true' } do
             if options[:three_d_secure]
               add_normalized_threeds_2_data(xml, payment_method, options)
+              add_threeds_exemption_data(xml, options) if options[:three_ds_exemption_type]
             else
               indicator = options[:commerce_indicator] || stored_credential_commerce_indicator(options)
               xml.tag!('commerceIndicator', indicator) if indicator
             end
             xml.tag!('reconciliationID', options[:reconciliation_id]) if options[:reconciliation_id]
+            xml.tag!('firstRecurringPayment', options[:first_recurring_payment]) if options[:first_recurring_payment]
             xml.tag!('mobileRemotePaymentType', options[:mobile_remote_payment_type]) if options[:mobile_remote_payment_type]
           end
+        end
+      end
+
+      def add_threeds_exemption_data(xml, options)
+        return unless options[:three_ds_exemption_type]
+
+        exemption = options[:three_ds_exemption_type].to_sym
+
+        case exemption
+        when :authentication_outage, :corporate_card, :delegated_authentication, :low_risk, :low_value, :trusted_merchant
+          xml.tag!(THREEDS_EXEMPTIONS[exemption], '1')
         end
       end
 
@@ -796,26 +829,35 @@ module ActiveMerchant #:nodoc:
         payment_method.is_a?(NetworkTokenizationCreditCard)
       end
 
+      def subsequent_nt_apple_pay_auth(source, options)
+        return unless options[:stored_credential] || options[:stored_credential_overrides]
+        return unless @@payment_solution[source]
+
+        options.dig(:stored_credential_overrides, :subsequent_auth) || options.dig(:stored_credential, :initiator) == 'merchant'
+      end
+
       def add_auth_network_tokenization(xml, payment_method, options)
         return unless network_tokenization?(payment_method)
+
+        commerce_indicator = 'internet' if subsequent_nt_apple_pay_auth(payment_method.source, options)
 
         brand = card_brand(payment_method).to_sym
 
         case brand
         when :visa
           xml.tag! 'ccAuthService', { 'run' => 'true' } do
-            xml.tag!('cavv', payment_method.payment_cryptogram)
-            xml.tag!('commerceIndicator', ECI_BRAND_MAPPING[brand])
-            xml.tag!('xid', payment_method.payment_cryptogram)
+            xml.tag!('cavv', payment_method.payment_cryptogram) unless commerce_indicator
+            xml.commerceIndicator commerce_indicator.nil? ? ECI_BRAND_MAPPING[brand] : commerce_indicator
+            xml.tag!('xid', payment_method.payment_cryptogram) unless commerce_indicator
             xml.tag!('reconciliationID', options[:reconciliation_id]) if options[:reconciliation_id]
           end
         when :master
           xml.tag! 'ucaf' do
-            xml.tag!('authenticationData', payment_method.payment_cryptogram)
+            xml.tag!('authenticationData', payment_method.payment_cryptogram) unless commerce_indicator
             xml.tag!('collectionIndicator', DEFAULT_COLLECTION_INDICATOR)
           end
           xml.tag! 'ccAuthService', { 'run' => 'true' } do
-            xml.tag!('commerceIndicator', ECI_BRAND_MAPPING[brand])
+            xml.commerceIndicator commerce_indicator.nil? ? ECI_BRAND_MAPPING[brand] : commerce_indicator
             xml.tag!('reconciliationID', options[:reconciliation_id]) if options[:reconciliation_id]
           end
         when :american_express
@@ -994,7 +1036,7 @@ module ActiveMerchant #:nodoc:
 
         stored_credential_subsequent_auth_first = 'true' if options.dig(:stored_credential, :initial_transaction)
         stored_credential_transaction_id = options.dig(:stored_credential, :network_transaction_id) if options.dig(:stored_credential, :initiator) == 'merchant'
-        stored_credential_subsequent_auth_stored_cred = 'true' if options.dig(:stored_credential, :initiator) == 'cardholder' && !options.dig(:stored_credential, :initial_transaction) || options.dig(:stored_credential, :initiator) == 'merchant' && options.dig(:stored_credential, :reason_type) == 'unscheduled'
+        stored_credential_subsequent_auth_stored_cred = 'true' if subsequent_cardholder_initiated_transaction?(options) || unscheduled_merchant_initiated_transaction?(options) || threeds_stored_credential_exemption?(options)
 
         override_subsequent_auth_first = options.dig(:stored_credential_overrides, :subsequent_auth_first)
         override_subsequent_auth_transaction_id = options.dig(:stored_credential_overrides, :subsequent_auth_transaction_id)
@@ -1003,6 +1045,18 @@ module ActiveMerchant #:nodoc:
         xml.subsequentAuthFirst override_subsequent_auth_first.nil? ? stored_credential_subsequent_auth_first : override_subsequent_auth_first
         xml.subsequentAuthTransactionID override_subsequent_auth_transaction_id.nil? ? stored_credential_transaction_id : override_subsequent_auth_transaction_id
         xml.subsequentAuthStoredCredential override_subsequent_auth_stored_cred.nil? ? stored_credential_subsequent_auth_stored_cred : override_subsequent_auth_stored_cred
+      end
+
+      def subsequent_cardholder_initiated_transaction?(options)
+        options.dig(:stored_credential, :initiator) == 'cardholder' && !options.dig(:stored_credential, :initial_transaction)
+      end
+
+      def unscheduled_merchant_initiated_transaction?(options)
+        options.dig(:stored_credential, :initiator) == 'merchant' && options.dig(:stored_credential, :reason_type) == 'unscheduled'
+      end
+
+      def threeds_stored_credential_exemption?(options)
+        options[:three_ds_exemption_type] == THREEDS_EXEMPTIONS[:stored_credential]
       end
 
       def add_partner_solution_id(xml)
@@ -1055,12 +1109,26 @@ module ActiveMerchant #:nodoc:
         message = message_from(response)
         authorization = success || in_fraud_review?(response) ? authorization_from(response, action, amount, options) : nil
 
-        Response.new(success, message, response,
+        message = auto_void?(authorization_from(response, action, amount, options), response, message, options)
+
+        Response.new(
+          success,
+          message,
+          response,
           test: test?,
           authorization: authorization,
           fraud_review: in_fraud_review?(response),
           avs_result: { code: response[:avsCode] },
-          cvv_result: response[:cvCode])
+          cvv_result: response[:cvCode]
+        )
+      end
+
+      def auto_void?(authorization, response, message, options = {})
+        return message unless response[:reasonCode] == '230' && options[:auto_void_230]
+
+        response = void(authorization, options)
+        response&.success? ? message += ' - transaction has been auto-voided.' : message += ' - transaction could not be auto-voided.'
+        message
       end
 
       # Parse the SOAP response
@@ -1094,6 +1162,7 @@ module ActiveMerchant #:nodoc:
             parent += '_' + node.parent.attributes['id'] if node.parent.attributes['id']
             parent += '_'
           end
+          reply[:reconciliationID2] = node.text if node.name == 'reconciliationID' && reply[:reconciliationID]
           reply["#{parent}#{node.name}".to_sym] ||= node.text
         end
         return reply
@@ -1130,6 +1199,10 @@ module ActiveMerchant #:nodoc:
 
       def eligible_for_zero_auth?(payment_method, options = {})
         payment_method.is_a?(CreditCard) && options[:zero_amount_auth]
+      end
+
+      def format_routing_number(routing_number, options)
+        options[:currency] == 'CAD' && routing_number.length > 8 ? routing_number[-8..-1] : routing_number
       end
     end
   end

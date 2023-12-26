@@ -10,10 +10,12 @@ class CyberSourceRestTest < Test::Unit::TestCase
       private_key: "NYlM1sgultLjvgaraWvDCXykdz1buqOW8yXE3pMlmxQ=\n"
     )
     @bank_account = check(account_number: '4100', routing_number: '121042882')
-    @credit_card = credit_card('4111111111111111',
+    @credit_card = credit_card(
+      '4111111111111111',
       verification_value: '987',
       month: 12,
-      year: 2031)
+      year: 2031
+    )
     @apple_pay = network_tokenization_credit_card(
       '4111111111111111',
       payment_cryptogram: 'AceY+igABPs3jdwNaDg3MAACAAA=',
@@ -96,7 +98,7 @@ class CyberSourceRestTest < Test::Unit::TestCase
 
     assert_equal 'def345', parsed['keyid']
     assert_equal 'HmacSHA256', parsed['algorithm']
-    assert_equal 'host date (request-target) digest v-c-merchant-id', parsed['headers']
+    assert_equal 'host date request-target digest v-c-merchant-id', parsed['headers']
     assert_equal %w[algorithm headers keyid signature], signature.split(', ').map { |v| v.split('=').first }.sort
   end
 
@@ -104,7 +106,7 @@ class CyberSourceRestTest < Test::Unit::TestCase
     signature = @gateway.send :get_http_signature, @resource, nil, 'get', @gmt_time
 
     parsed = parse_signature(signature)
-    assert_equal 'host date (request-target) v-c-merchant-id', parsed['headers']
+    assert_equal 'host date request-target v-c-merchant-id', parsed['headers']
   end
 
   def test_scrub
@@ -125,7 +127,7 @@ class CyberSourceRestTest < Test::Unit::TestCase
   def test_add_ammount_and_currency
     post = { orderInformation: {} }
 
-    @gateway.send :add_amount, post, 10221
+    @gateway.send :add_amount, post, 10221, {}
 
     assert_equal '102.21', post.dig(:orderInformation, :amountDetails, :totalAmount)
     assert_equal 'USD', post.dig(:orderInformation, :amountDetails, :currency)
@@ -202,9 +204,10 @@ class CyberSourceRestTest < Test::Unit::TestCase
 
   def test_authorize_google_pay_master_card
     stub_comms do
-      @gateway.authorize(100, @google_pay_mc, @options)
-    end.check_request do |_endpoint, data, _headers|
+      @gateway.authorize(100, @google_pay_mc, @options.merge(merchant_id: 'MerchantId'))
+    end.check_request do |_endpoint, data, headers|
       request = JSON.parse(data)
+      assert_equal 'MerchantId', headers['V-C-Merchant-Id']
       assert_equal '002', request['paymentInformation']['tokenizedCard']['type']
       assert_equal '1', request['paymentInformation']['tokenizedCard']['transactionType']
       assert_nil request['paymentInformation']['tokenizedCard']['requestorId']
@@ -272,6 +275,124 @@ class CyberSourceRestTest < Test::Unit::TestCase
     end.respond_with(successful_purchase_response)
 
     assert_success response
+  end
+
+  def test_successful_credit_card_purchase_single_request_ignore_avs
+    stub_comms do
+      options = @options.merge(ignore_avs: true)
+      @gateway.purchase(@amount, @credit_card, options)
+    end.check_request do |_endpoint, request_body, _headers|
+      json_body = JSON.parse(request_body)
+      assert_equal json_body['processingInformation']['authorizationOptions']['ignoreAvsResult'], 'true'
+      assert_nil json_body['processingInformation']['authorizationOptions']['ignoreCvResult']
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_successful_credit_card_purchase_single_request_without_ignore_avs
+    stub_comms do
+      # globally ignored AVS for gateway instance:
+      options = @options.merge(ignore_avs: false)
+      @gateway.options[:ignore_avs] = true
+      @gateway.purchase(@amount, @credit_card, options)
+    end.check_request do |_endpoint, request_body, _headers|
+      json_body = JSON.parse(request_body)
+      assert_nil json_body['processingInformation']['authorizationOptions']['ignoreAvsResult']
+      assert_nil json_body['processingInformation']['authorizationOptions']['ignoreCvResult']
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_successful_credit_card_purchase_single_request_ignore_ccv
+    stub_comms do
+      @gateway.purchase(@amount, @credit_card, @options.merge(ignore_cvv: true))
+    end.check_request do |_endpoint, request_body, _headers|
+      json_body = JSON.parse(request_body)
+      assert_nil json_body['processingInformation']['authorizationOptions']['ignoreAvsResult']
+      assert_equal json_body['processingInformation']['authorizationOptions']['ignoreCvResult'], 'true'
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_successful_credit_card_purchase_single_request_without_ignore_ccv
+    stub_comms do
+      @gateway.purchase(@amount, @credit_card, @options.merge(ignore_cvv: false))
+    end.check_request do |_endpoint, request_body, _headers|
+      json_body = JSON.parse(request_body)
+      assert_nil json_body['processingInformation']['authorizationOptions']['ignoreAvsResult']
+      assert_nil json_body['processingInformation']['authorizationOptions']['ignoreCvResult']
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_authorize_includes_mdd_fields
+    stub_comms do
+      @gateway.authorize(100, @credit_card, order_id: '1', mdd_field_2: 'CustomValue2', mdd_field_3: 'CustomValue3')
+    end.check_request do |_endpoint, data, _headers|
+      json_data = JSON.parse(data)
+      assert_equal json_data['merchantDefinedInformation'][0]['key'], 'mdd_field_2'
+      assert_equal json_data['merchantDefinedInformation'][0]['value'], 'CustomValue2'
+      assert_equal json_data['merchantDefinedInformation'].count, 2
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_capture_includes_mdd_fields
+    stub_comms do
+      @gateway.capture(100, '1846925324700976124593', order_id: '1', mdd_field_2: 'CustomValue2', mdd_field_3: 'CustomValue3')
+    end.check_request do |_endpoint, data, _headers|
+      json_data = JSON.parse(data)
+      assert_equal json_data['merchantDefinedInformation'][0]['key'], 'mdd_field_2'
+      assert_equal json_data['merchantDefinedInformation'][0]['value'], 'CustomValue2'
+      assert_equal json_data['merchantDefinedInformation'].count, 2
+    end.respond_with(successful_capture_response)
+  end
+
+  def test_credit_includes_mdd_fields
+    stub_comms do
+      @gateway.credit(@amount, @credit_card, mdd_field_2: 'CustomValue2', mdd_field_3: 'CustomValue3')
+    end.check_request do |_endpoint, data, _headers|
+      json_data = JSON.parse(data)
+      assert_equal json_data['merchantDefinedInformation'][0]['key'], 'mdd_field_2'
+      assert_equal json_data['merchantDefinedInformation'][0]['value'], 'CustomValue2'
+      assert_equal json_data['merchantDefinedInformation'].count, 2
+    end.respond_with(successful_credit_response)
+  end
+
+  def test_authorize_includes_reconciliation_id
+    stub_comms do
+      @gateway.authorize(100, @credit_card, order_id: '1', reconciliation_id: '181537')
+    end.check_request do |_endpoint, data, _headers|
+      json_data = JSON.parse(data)
+      assert_equal json_data['clientReferenceInformation']['reconciliationId'], '181537'
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_bank_account_purchase_includes_sec_code
+    stub_comms do
+      @gateway.purchase(@amount, @bank_account, order_id: '1', sec_code: 'WEB')
+    end.check_request do |_endpoint, data, _headers|
+      json_data = JSON.parse(data)
+      assert_equal json_data['processingInformation']['bankTransferOptions']['secCode'], 'WEB'
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_purchase_includes_invoice_number
+    stub_comms do
+      @gateway.purchase(100, @credit_card, invoice_number: '1234567')
+    end.check_request do |_endpoint, data, _headers|
+      json_data = JSON.parse(data)
+      assert_equal json_data['orderInformation']['invoiceDetails']['invoiceNumber'], '1234567'
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_adds_application_id_as_partner_solution_id
+    partner_id = 'partner_id'
+    CyberSourceRestGateway.application_id = partner_id
+
+    stub_comms do
+      @gateway.authorize(100, @credit_card, @options)
+    end.check_request do |_endpoint, data, _headers|
+      json_data = JSON.parse(data)
+      assert_equal json_data['clientReferenceInformation']['partner']['solutionId'], partner_id
+    end.respond_with(successful_purchase_response)
+  ensure
+    CyberSourceRestGateway.application_id = nil
   end
 
   private
@@ -379,6 +500,86 @@ class CyberSourceRestTest < Test::Unit::TestCase
         "status": "AUTHORIZED",
         "submitTimeUtc": "2023-01-29T17:13:31Z"
       }
+    RESPONSE
+  end
+
+  def successful_capture_response
+    <<-RESPONSE
+    {
+      "_links": {
+        "void": {
+          "method": "POST",
+          "href": "/pts/v2/captures/6799471903876585704951/voids"
+        },
+        "self": {
+          "method": "GET",
+          "href": "/pts/v2/captures/6799471903876585704951"
+        }
+      },
+      "clientReferenceInformation": {
+        "code": "TC50171_3"
+      },
+      "id": "6799471903876585704951",
+      "orderInformation": {
+        "amountDetails": {
+          "totalAmount": "102.21",
+          "currency": "USD"
+        }
+      },
+      "reconciliationId": "78243988SD9YL291",
+      "status": "PENDING",
+      "submitTimeUtc": "2023-03-27T19:59:50Z"
+    }
+    RESPONSE
+  end
+
+  def successful_credit_response
+    <<-RESPONSE
+    {
+      "_links": {
+        "void": {
+          "method": "POST",
+          "href": "/pts/v2/credits/6799499091686234304951/voids"
+        },
+        "self": {
+          "method": "GET",
+          "href": "/pts/v2/credits/6799499091686234304951"
+        }
+      },
+      "clientReferenceInformation": {
+        "code": "12345678"
+      },
+      "creditAmountDetails": {
+        "currency": "usd",
+        "creditAmount": "200.00"
+      },
+      "id": "6799499091686234304951",
+      "orderInformation": {
+        "amountDetails": {
+          "currency": "usd"
+        }
+      },
+      "paymentAccountInformation": {
+        "card": {
+          "type": "001"
+        }
+      },
+      "paymentInformation": {
+        "tokenizedCard": {
+          "type": "001"
+        },
+        "card": {
+          "type": "001"
+        }
+      },
+      "processorInformation": {
+        "approvalCode": "888888",
+        "responseCode": "100"
+      },
+      "reconciliationId": "70391830ZFKZI570",
+      "status": "PENDING",
+      "submitTimeUtc": "2023-03-27T20:45:09Z"
+    }
     RESPONSE
   end
 end
