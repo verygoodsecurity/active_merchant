@@ -9,26 +9,32 @@ class GlobalCollectTest < Test::Unit::TestCase
                                         secret_api_key: '109H/288H*50Y18W4/0G8571F245KA=')
 
     @credit_card = credit_card('4567350000427977')
-    @apple_pay_network_token = network_tokenization_credit_card('4444333322221111',
+    @apple_pay_network_token = network_tokenization_credit_card(
+      '4444333322221111',
       month: 10,
       year: 24,
       first_name: 'John',
       last_name: 'Smith',
       eci: '05',
       payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk=',
-      source: :apple_pay)
+      source: :apple_pay
+    )
 
-    @google_pay_network_token = network_tokenization_credit_card('4444333322221111',
+    @google_pay_network_token = network_tokenization_credit_card(
+      '4444333322221111',
       payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk=',
       month: '01',
       year: Time.new.year + 2,
       source: :google_pay,
       transaction_id: '123456789',
-      eci: '05')
+      eci: '05'
+    )
 
-    @google_pay_pan_only = credit_card('4444333322221111',
+    @google_pay_pan_only = credit_card(
+      '4444333322221111',
       month: '01',
-      year: Time.new.year + 2)
+      year: Time.new.year + 2
+    )
 
     @declined_card = credit_card('5424180279791732')
     @accepted_amount = 4005
@@ -46,7 +52,8 @@ class GlobalCollectTest < Test::Unit::TestCase
         ds_transaction_id: '97267598-FAE6-48F2-8083-C23433990FBC',
         acs_transaction_id: '13c701a3-5a88-4c45-89e9-ef65e50a8bf9',
         cavv_algorithm: 1,
-        authentication_response_status: 'Y'
+        authentication_response_status: 'Y',
+        flow: 'frictionless'
       }
     )
   end
@@ -231,6 +238,7 @@ class GlobalCollectTest < Test::Unit::TestCase
         name: 'Spreedly Airlines',
         flight_date: '20190810',
         passenger_name: 'Randi Smith',
+        agent_numeric_code: '12345',
         flight_legs: [
           { arrival_airport: 'BDL',
             origin_airport: 'RDU',
@@ -381,7 +389,7 @@ class GlobalCollectTest < Test::Unit::TestCase
     end.check_request do |_method, _endpoint, data, _headers|
       assert_match %r("fraudFields":{"website":"www.example.com","giftMessage":"Happy Day!","customerIpAddress":"127.0.0.1"}), data
       assert_match %r("merchantReference":"123"), data
-      assert_match %r("customer":{"personalInformation":{"name":{"firstName":"Longbob","surname":"Longsen"}},"merchantCustomerId":"123987","contactDetails":{"emailAddress":"example@example.com","phoneNumber":"\(555\)555-5555"},"billingAddress":{"street":"456 My Street","additionalInfo":"Apt 1","zip":"K1C2N6","city":"Ottawa","state":"ON","countryCode":"CA"}}}), data
+      assert_match %r("customer":{"personalInformation":{"name":{"firstName":"Longbob","surname":"Longsen"}},"merchantCustomerId":"123987","contactDetails":{"emailAddress":"example@example.com","phoneNumber":"\(555\)555-5555"},"billingAddress":{"street":"My Street","houseNumber":"456","additionalInfo":"Apt 1","zip":"K1C2N6","city":"Ottawa","state":"ON","countryCode":"CA"}}}), data
       assert_match %r("paymentProductId":"123ABC"), data
     end.respond_with(successful_authorize_response)
 
@@ -392,7 +400,8 @@ class GlobalCollectTest < Test::Unit::TestCase
     response = stub_comms(@gateway, :ssl_request) do
       @gateway.authorize(@accepted_amount, @credit_card, @options_3ds2)
     end.check_request do |_method, _endpoint, data, _headers|
-      assert_match(/"threeDSecure\":{\"externalCardholderAuthenticationData\":{/, data)
+      assert_match(/threeDSecure/, data)
+      assert_match(/externalCardholderAuthenticationData/, data)
       assert_match(/"eci\":\"05\"/, data)
       assert_match(/"cavv\":\"jJ81HADVRtXfCBATEp01CJUAAAA=\"/, data)
       assert_match(/"xid\":\"BwABBJQ1AgAAAAAgJDUCAAAAAAA=\"/, data)
@@ -424,6 +433,16 @@ class GlobalCollectTest < Test::Unit::TestCase
     assert_success response
   end
 
+  def test_successful_authorize_with_3ds_exemption
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.authorize(@accepted_amount, @credit_card, { three_ds_exemption_type: 'moto' })
+    end.check_request do |_method, _endpoint, data, _headers|
+      assert_match(/"transactionChannel\":\"MOTO\"/, data)
+    end.respond_with(successful_authorize_with_3ds2_data_response)
+
+    assert_success response
+  end
+
   def test_truncates_first_name_to_15_chars
     credit_card = credit_card('4567350000427977', { first_name: 'thisisaverylongfirstname' })
 
@@ -447,7 +466,7 @@ class GlobalCollectTest < Test::Unit::TestCase
     assert_success response
   end
 
-  def test_truncates_address_fields
+  def test_truncates_split_address_fields
     response = stub_comms(@gateway, :ssl_request) do
       @gateway.purchase(@accepted_amount, @credit_card, {
         billing_address: {
@@ -460,7 +479,8 @@ class GlobalCollectTest < Test::Unit::TestCase
         }
       })
     end.check_request do |_method, _endpoint, data, _headers|
-      refute_match(/Supercalifragilisticexpialidociousthiscantbemorethanfiftycharacters/, data)
+      assert_equal(JSON.parse(data)['order']['customer']['billingAddress']['houseNumber'], '1234')
+      assert_equal(JSON.parse(data)['order']['customer']['billingAddress']['street'], 'Supercalifragilisticexpialidociousthiscantbemoreth')
     end.respond_with(successful_capture_response)
     assert_success response
   end

@@ -10,36 +10,79 @@ class RemoteCommerceHubTest < Test::Unit::TestCase
 
     @amount = 1204
     @credit_card = credit_card('4005550000000019', month: '02', year: '2035', verification_value: '123', first_name: 'John', last_name: 'Doe')
-    @google_pay = network_tokenization_credit_card('4005550000000019',
+    @google_pay = network_tokenization_credit_card(
+      '4005550000000019',
       brand: 'visa',
       eci: '05',
       month: '02',
       year: '2035',
       source: :google_pay,
-      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk=')
-    @apple_pay = network_tokenization_credit_card('4005550000000019',
+      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk='
+    )
+    @apple_pay = network_tokenization_credit_card(
+      '4005550000000019',
       brand: 'visa',
       eci: '05',
       month: '02',
       year: '2035',
       source: :apple_pay,
-      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk=')
-    @declined_apple_pay = network_tokenization_credit_card('4000300011112220',
+      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk='
+    )
+    @declined_apple_pay = network_tokenization_credit_card(
+      '4000300011112220',
       brand: 'visa',
       eci: '05',
       month: '02',
       year: '2035',
       source: :apple_pay,
-      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk=')
+      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk='
+    )
     @declined_card = credit_card('4000300011112220', month: '02', year: '2035', verification_value: '123')
     @master_card = credit_card('5454545454545454', brand: 'master')
     @options = {}
+    @three_d_secure = {
+      ds_transaction_id: '3543-b90d-d6dc1765c98',
+      authentication_response_status: 'A',
+      cavv: 'AAABCZIhcQAAAABZlyFxAAAAAAA',
+      eci: '05',
+      xid: '&x_MD5_Hash=abfaf1d1df004e3c27d5d2e05929b529&x_state=BC&x_reference_3=&x_auth_code=ET141870&x_fp_timestamp=1231877695',
+      version: '2.2.0'
+    }
+    @dynamic_descriptors = {
+      mcc: '1234',
+      merchant_name: 'Spreedly',
+      customer_service_number: '555444321',
+      service_entitlement: '123444555',
+      dynamic_descriptors_address: {
+        'street': '123 Main Street',
+        'houseNumberOrName': 'Unit B',
+        'city': 'Atlanta',
+        'stateOrProvince': 'GA',
+        'postalCode': '30303',
+        'country': 'US'
+      }
+    }
   end
 
   def test_successful_purchase
     response = @gateway.purchase(@amount, @credit_card, @options)
     assert_success response
     assert_equal 'Approved', response.message
+  end
+
+  def test_successful_3ds_purchase
+    @options.merge!(three_d_secure: @three_d_secure)
+    response = @gateway.purchase(@amount, @credit_card, @options)
+    assert_success response
+    assert_equal 'Approved', response.message
+  end
+
+  def test_successful_purchase_whit_physical_goods_indicator
+    @options[:physical_goods_indicator] = true
+    response = @gateway.purchase(@amount, @credit_card, @options)
+    assert_success response
+    assert_equal 'Approved', response.message
+    assert response.params['transactionDetails']['physicalGoodsIndicator']
   end
 
   def test_successful_purchase_with_gsf_mit
@@ -106,10 +149,16 @@ class RemoteCommerceHubTest < Test::Unit::TestCase
     assert_success response
   end
 
+  def test_successful_purchase_with_dynamic_descriptors
+    response = @gateway.purchase(@amount, @credit_card, @options.merge(@dynamic_descriptors))
+    assert_success response
+    assert_equal 'Approved', response.message
+  end
+
   def test_failed_purchase
     response = @gateway.purchase(@amount, @declined_card, @options)
     assert_failure response
-    assert_equal 'Unable to assign card to brand: Invalid.', response.message
+    assert_match 'Unable to assign card to brand: Invalid', response.message
     assert_equal '104', response.error_code
   end
 
@@ -119,19 +168,26 @@ class RemoteCommerceHubTest < Test::Unit::TestCase
     assert_equal 'Approved', response.message
   end
 
-  # Commenting out until we are able to resolve issue with capture transactions failing at gateway
-  # def test_successful_authorize_and_capture
-  #   authorize = @gateway.authorize(@amount, @credit_card, @options)
-  #   assert_success authorize
+  def test_successful_authorize_and_capture
+    authorize = @gateway.authorize(@amount, @credit_card, @options)
+    assert_success authorize
 
-  #   capture = @gateway.capture(@amount, authorize.authorization)
-  #   assert_success capture
-  # end
+    capture = @gateway.capture(@amount, authorize.authorization)
+    assert_success capture
+  end
+
+  def test_successful_authorize_and_capture_with_dynamic_descriptors
+    authorize = @gateway.authorize(@amount, @credit_card, @options.merge(@dynamic_descriptors))
+    assert_success authorize
+
+    capture = @gateway.capture(@amount, authorize.authorization, @options.merge(@dynamic_descriptors))
+    assert_success capture
+  end
 
   def test_failed_authorize
     response = @gateway.authorize(@amount, @declined_card, @options)
     assert_failure response
-    assert_equal 'Unable to assign card to brand: Invalid.', response.message
+    assert_match 'Unable to assign card to brand: Invalid', response.message
   end
 
   def test_successful_authorize_and_void
@@ -203,6 +259,19 @@ class RemoteCommerceHubTest < Test::Unit::TestCase
     assert_equal 'Referenced transaction is invalid or not found', response.message
   end
 
+  def test_successful_credit
+    response = @gateway.credit(@amount, @credit_card, @options)
+
+    assert_success response
+    assert_equal 'Approved', response.message
+  end
+
+  def test_failed_credit
+    response = @gateway.credit(@amount, '')
+    assert_failure response
+    assert_equal 'Invalid or Missing Field Data', response.message
+  end
+
   def test_successful_store
     response = @gateway.store(@credit_card, @options)
     assert_success response
@@ -235,7 +304,7 @@ class RemoteCommerceHubTest < Test::Unit::TestCase
   def test_failed_purchase_with_declined_apple_pay
     response = @gateway.purchase(@amount, @declined_apple_pay, @options)
     assert_failure response
-    assert_equal 'Unable to assign card to brand: Invalid.', response.message
+    assert_match 'Unable to assign card to brand: Invalid', response.message
   end
 
   def test_transcript_scrubbing
@@ -259,5 +328,19 @@ class RemoteCommerceHubTest < Test::Unit::TestCase
     assert_scrubbed(@gateway.options[:api_key], transcript)
     assert_scrubbed(@gateway.options[:api_secret], transcript)
     assert_scrubbed(@apple_pay.payment_cryptogram, transcript)
+  end
+
+  def test_successful_purchase_with_encrypted_credit_card
+    @options[:encryption_data] = {
+      keyId: '6d0b6b63-3658-4c90-b7a4-bffb8a928288',
+      encryptionType: 'RSA',
+      encryptionBlock: 'udJ89RebrHLVxa3ofdyiQ/RrF2Y4xKC/qw4NuV1JYrTDEpNeIq9ZimVffMjgkyKL8dlnB2R73XFtWA4klHrpn6LZrRumYCgoqAkBRJCrk09+pE5km2t2LvKtf/Bj2goYQNFA9WLCCvNGwhofp8bNfm2vfGsBr2BkgL+PH/M4SqyRHz0KGKW/NdQ4Mbdh4hLccFsPjtDnNidkMep0P02PH3Se6hp1f5GLkLTbIvDLPSuLa4eNgzb5/hBBxrq5M5+5n9a1PhQnVT1vPU0WbbWe1SGdGiVCeSYmmX7n+KkVmc1lw0dD7NXBjKmD6aGFAWGU/ls+7JVydedDiuz4E7HSDQ==',
+      encryptionBlockFields: 'card.cardData:16,card.nameOnCard:10,card.expirationMonth:2,card.expirationYear:4,card.securityCode:3',
+      encryptionTarget: 'MANUAL'
+    }
+
+    response = @gateway.purchase(@amount, @credit_card, @options)
+    assert_success response
+    assert_equal 'Approved', response.message
   end
 end

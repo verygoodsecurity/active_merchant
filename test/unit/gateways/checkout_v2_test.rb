@@ -1,15 +1,5 @@
 require 'test_helper'
 
-module ActiveMerchant #:nodoc:
-  module Billing #:nodoc:
-    class CheckoutV2Gateway
-      def setup_access_token
-        '12345678'
-      end
-    end
-  end
-end
-
 class CheckoutV2Test < Test::Unit::TestCase
   include CommStub
 
@@ -17,13 +7,23 @@ class CheckoutV2Test < Test::Unit::TestCase
     @gateway = CheckoutV2Gateway.new(
       secret_key: '1111111111111'
     )
-    @gateway_oauth = CheckoutV2Gateway.new({ client_id: 'abcd', client_secret: '1234' })
+    @gateway_oauth = CheckoutV2Gateway.new({ client_id: 'abcd', client_secret: '1234', access_token: '12345678' })
     @gateway_api = CheckoutV2Gateway.new({
       secret_key: '1111111111111',
       public_key: '2222222222222'
     })
     @credit_card = credit_card
     @amount = 100
+    @token = '2MPedsuenG2o8yFfrsdOBWmOuEf'
+  end
+
+  def test_setup_access_token_should_rise_an_exception_under_bad_request
+    error = assert_raises(ActiveMerchant::OAuthResponseError) do
+      @gateway.expects(:raw_ssl_request).returns(Net::HTTPBadRequest.new(1.0, 400, 'Bad Request'))
+      @gateway.send(:setup_access_token)
+    end
+
+    assert_match(/Failed with 400 Bad Request/, error.message)
   end
 
   def test_successful_purchase
@@ -337,10 +337,7 @@ class CheckoutV2Test < Test::Unit::TestCase
         card_on_file: true,
         transaction_indicator: 2,
         previous_charge_id: 'pay_123',
-        processing_channel_id: 'pc_123',
-        marketplace: {
-          sub_entity_id: 'ent_123'
-        }
+        processing_channel_id: 'pc_123'
       }
       @gateway.authorize(@amount, @credit_card, options)
     end.check_request do |_method, _endpoint, data, _headers|
@@ -348,7 +345,6 @@ class CheckoutV2Test < Test::Unit::TestCase
       assert_match(%r{"payment_type":"Recurring"}, data)
       assert_match(%r{"previous_payment_id":"pay_123"}, data)
       assert_match(%r{"processing_channel_id":"pc_123"}, data)
-      assert_match(/"marketplace\":{\"sub_entity_id\":\"ent_123\"}/, data)
     end.respond_with(successful_authorize_response)
 
     assert_success response
@@ -365,6 +361,7 @@ class CheckoutV2Test < Test::Unit::TestCase
     initial_response = stub_comms(@gateway, :ssl_request) do
       initial_options = {
         stored_credential: {
+          initiator: 'cardholder',
           initial_transaction: true,
           reason_type: 'installment'
         }
@@ -415,6 +412,36 @@ class CheckoutV2Test < Test::Unit::TestCase
 
     assert_success response
     assert_equal 'Succeeded', response.message
+  end
+
+  def test_successful_purchase_with_extra_customer_data
+    stub_comms(@gateway, :ssl_request) do
+      options = {
+        phone_country_code: '1',
+        billing_address: address
+      }
+      @gateway.purchase(@amount, @credit_card, options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_equal request['source']['phone']['number'], '(555)555-5555'
+      assert_equal request['source']['phone']['country_code'], '1'
+      assert_equal request['customer']['name'], 'Longbob Longsen'
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_no_customer_name_included_in_token_purchase
+    stub_comms(@gateway, :ssl_request) do
+      options = {
+        phone_country_code: '1',
+        billing_address: address
+      }
+      @gateway.purchase(@amount, @token, options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_equal request['source']['phone']['number'], '(555)555-5555'
+      assert_equal request['source']['phone']['country_code'], '1'
+      refute_includes data, 'name'
+    end.respond_with(successful_purchase_response)
   end
 
   def test_successful_purchase_with_metadata
@@ -660,6 +687,113 @@ class CheckoutV2Test < Test::Unit::TestCase
     assert_success response
   end
 
+  def test_successful_money_transfer_payout_via_credit
+    options = {
+      instruction_purpose: 'leisure',
+      account_holder_type: 'individual',
+      billing_address: address,
+      payout: true,
+      destination: {
+        account_holder: {
+          phone: {
+            number: '9108675309',
+            country_code: '1'
+          },
+          identification: {
+            type: 'passport',
+            number: '1234567890'
+          },
+          email: 'too_many_fields@checkout.com',
+          date_of_birth: '2004-10-27',
+          country_of_birth: 'US'
+        }
+      },
+      sender: {
+        type: 'individual',
+        first_name: 'Jane',
+        middle_name: 'Middle',
+        last_name: 'Doe',
+        reference: '012345',
+        reference_type: 'other',
+        source_of_funds: 'debit',
+        identification: {
+          type: 'passport',
+          number: '0987654321',
+          issuing_country: 'US',
+          date_of_expiry: '2027-07-07'
+        },
+        address: {
+          address1: '205 Main St',
+          address2: 'Apt G',
+          city: 'Winchestertonfieldville',
+          state: 'IA',
+          country: 'US',
+          zip: '12345'
+        },
+        date_of_birth: '2004-10-27',
+        country_of_birth: 'US',
+        nationality: 'US'
+      }
+    }
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.credit(@amount, @credit_card, options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_equal request['instruction']['purpose'], 'leisure'
+      assert_equal request['destination']['account_holder']['phone']['number'], '9108675309'
+      assert_equal request['destination']['account_holder']['phone']['country_code'], '1'
+      assert_equal request['destination']['account_holder']['identification']['number'], '1234567890'
+      assert_equal request['destination']['account_holder']['identification']['type'], 'passport'
+      assert_equal request['destination']['account_holder']['email'], 'too_many_fields@checkout.com'
+      assert_equal request['destination']['account_holder']['date_of_birth'], '2004-10-27'
+      assert_equal request['destination']['account_holder']['country_of_birth'], 'US'
+      assert_equal request['sender']['type'], 'individual'
+      assert_equal request['sender']['first_name'], 'Jane'
+      assert_equal request['sender']['middle_name'], 'Middle'
+      assert_equal request['sender']['last_name'], 'Doe'
+      assert_equal request['sender']['reference'], '012345'
+      assert_equal request['sender']['reference_type'], 'other'
+      assert_equal request['sender']['source_of_funds'], 'debit'
+      assert_equal request['sender']['identification']['type'], 'passport'
+      assert_equal request['sender']['identification']['number'], '0987654321'
+      assert_equal request['sender']['identification']['issuing_country'], 'US'
+      assert_equal request['sender']['identification']['date_of_expiry'], '2027-07-07'
+      assert_equal request['sender']['address']['address_line1'], '205 Main St'
+      assert_equal request['sender']['address']['address_line2'], 'Apt G'
+      assert_equal request['sender']['address']['city'], 'Winchestertonfieldville'
+      assert_equal request['sender']['address']['state'], 'IA'
+      assert_equal request['sender']['address']['country'], 'US'
+      assert_equal request['sender']['address']['zip'], '12345'
+      assert_equal request['sender']['date_of_birth'], '2004-10-27'
+      assert_equal request['sender']['nationality'], 'US'
+    end.respond_with(successful_credit_response)
+    assert_success response
+  end
+
+  def test_transaction_successfully_reverts_to_regular_credit_when_payout_is_nil
+    options = {
+      instruction_purpose: 'leisure',
+      account_holder_type: 'individual',
+      billing_address: address,
+      payout: nil,
+      destination: {
+        account_holder: {
+          email: 'too_many_fields@checkout.com'
+        }
+      },
+      sender: {
+        type: 'individual'
+      }
+    }
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.credit(@amount, @credit_card, options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      refute_includes data, 'email'
+      refute_includes data, 'sender'
+    end.respond_with(successful_credit_response)
+    assert_success response
+  end
+
   def test_successful_refund
     response = stub_comms(@gateway, :ssl_request) do
       @gateway.purchase(@amount, @credit_card)
@@ -787,6 +921,58 @@ class CheckoutV2Test < Test::Unit::TestCase
 
   def test_supported_countries
     assert_equal %w[AD AE AR AT AU BE BG BH BR CH CL CN CO CY CZ DE DK EE EG ES FI FR GB GR HK HR HU IE IS IT JO JP KW LI LT LU LV MC MT MX MY NL NO NZ OM PE PL PT QA RO SA SE SG SI SK SM TR US], @gateway.supported_countries
+  end
+
+  def test_add_shipping_address
+    options = {
+      shipping_address: address()
+    }
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.authorize(@amount, @credit_card, options)
+    end.check_request do |_method, _endpoint, data, _headers|
+      request = JSON.parse(data)
+      assert_equal request['shipping']['address']['address_line1'], options[:shipping_address][:address1]
+      assert_equal request['shipping']['address']['address_line2'], options[:shipping_address][:address2]
+      assert_equal request['shipping']['address']['city'], options[:shipping_address][:city]
+      assert_equal request['shipping']['address']['state'], options[:shipping_address][:state]
+      assert_equal request['shipping']['address']['country'], options[:shipping_address][:country]
+      assert_equal request['shipping']['address']['zip'], options[:shipping_address][:zip]
+    end.respond_with(successful_authorize_response)
+
+    assert_success response
+    assert_equal 'Succeeded', response.message
+  end
+
+  def test_purchase_supports_alternate_credit_card_implementation
+    alternate_credit_card_class = Class.new
+    alternate_credit_card = alternate_credit_card_class.new
+
+    alternate_credit_card.expects(:credit_card?).returns(true)
+    alternate_credit_card.expects(:name).at_least_once.returns(@credit_card.name)
+    alternate_credit_card.expects(:number).returns(@credit_card.number)
+    alternate_credit_card.expects(:verification_value).returns(@credit_card.verification_value)
+    alternate_credit_card.expects(:first_name).at_least_once.returns(@credit_card.first_name)
+    alternate_credit_card.expects(:last_name).at_least_once.returns(@credit_card.first_name)
+
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.purchase(@amount, alternate_credit_card)
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_authorize_supports_alternate_credit_card_implementation
+    alternate_credit_card_class = Class.new
+    alternate_credit_card = alternate_credit_card_class.new
+
+    alternate_credit_card.expects(:credit_card?).returns(true)
+    alternate_credit_card.expects(:name).at_least_once.returns(@credit_card.name)
+    alternate_credit_card.expects(:number).returns(@credit_card.number)
+    alternate_credit_card.expects(:verification_value).returns(@credit_card.verification_value)
+    alternate_credit_card.expects(:first_name).at_least_once.returns(@credit_card.first_name)
+    alternate_credit_card.expects(:last_name).at_least_once.returns(@credit_card.first_name)
+
+    stub_comms(@gateway, :ssl_request) do
+      @gateway.authorize(@amount, alternate_credit_card)
+    end.respond_with(successful_authorize_response)
   end
 
   private

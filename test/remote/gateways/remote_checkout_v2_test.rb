@@ -10,61 +10,75 @@ class RemoteCheckoutV2Test < Test::Unit::TestCase
 
     @amount = 200
     @credit_card = credit_card('4242424242424242', verification_value: '100', month: '6', year: Time.now.year + 1)
+    @credit_card_dnh = credit_card('4024007181869214', verification_value: '100', month: '6', year: Time.now.year + 1)
     @expired_card = credit_card('4242424242424242', verification_value: '100', month: '6', year: '2010')
     @declined_card = credit_card('42424242424242424', verification_value: '234', month: '6', year: Time.now.year + 1)
     @threeds_card = credit_card('4485040371536584', verification_value: '100', month: '12', year: Time.now.year + 1)
     @mada_card = credit_card('5043000000000000', brand: 'mada')
 
-    @vts_network_token = network_tokenization_credit_card('4242424242424242',
+    @vts_network_token = network_tokenization_credit_card(
+      '4242424242424242',
       payment_cryptogram: 'AgAAAAAAAIR8CQrXcIhbQAAAAAA',
-      month:              '10',
-      year:               Time.now.year + 1,
-      source:             :network_token,
-      brand:              'visa',
-      verification_value: nil)
+      month: '10',
+      year: Time.now.year + 1,
+      source: :network_token,
+      brand: 'visa',
+      verification_value: nil
+    )
 
-    @mdes_network_token = network_tokenization_credit_card('5436031030606378',
-      eci:                '02',
+    @mdes_network_token = network_tokenization_credit_card(
+      '5436031030606378',
+      eci: '02',
       payment_cryptogram: 'AgAAAAAAAIR8CQrXcIhbQAAAAAA',
-      month:              '10',
-      year:               Time.now.year + 1,
-      source:             :network_token,
-      brand:              'master',
-      verification_value: nil)
+      month: '10',
+      year: Time.now.year + 1,
+      source: :network_token,
+      brand: 'master',
+      verification_value: nil
+    )
 
-    @google_pay_visa_cryptogram_3ds_network_token = network_tokenization_credit_card('4242424242424242',
-      eci:                '05',
+    @google_pay_visa_cryptogram_3ds_network_token = network_tokenization_credit_card(
+      '4242424242424242',
+      eci: '05',
       payment_cryptogram: 'AgAAAAAAAIR8CQrXcIhbQAAAAAA',
-      month:              '10',
-      year:               Time.now.year + 1,
-      source:             :google_pay,
-      verification_value: nil)
+      month: '10',
+      year: Time.now.year + 1,
+      source: :google_pay,
+      verification_value: nil
+    )
 
-    @google_pay_master_cryptogram_3ds_network_token = network_tokenization_credit_card('5436031030606378',
+    @google_pay_master_cryptogram_3ds_network_token = network_tokenization_credit_card(
+      '5436031030606378',
       payment_cryptogram: 'AgAAAAAAAIR8CQrXcIhbQAAAAAA',
-      month:              '10',
-      year:               Time.now.year + 1,
-      source:             :google_pay,
-      brand:              'master',
-      verification_value: nil)
+      month: '10',
+      year: Time.now.year + 1,
+      source: :google_pay,
+      brand: 'master',
+      verification_value: nil
+    )
 
-    @google_pay_pan_only_network_token = network_tokenization_credit_card('4242424242424242',
-      month:              '10',
-      year:               Time.now.year + 1,
-      source:             :google_pay,
-      verification_value: nil)
+    @google_pay_pan_only_network_token = network_tokenization_credit_card(
+      '4242424242424242',
+      month: '10',
+      year: Time.now.year + 1,
+      source:  :google_pay,
+      verification_value: nil
+    )
 
-    @apple_pay_network_token = network_tokenization_credit_card('4242424242424242',
-      eci:                '05',
+    @apple_pay_network_token = network_tokenization_credit_card(
+      '4242424242424242',
+      eci: '05',
       payment_cryptogram: 'AgAAAAAAAIR8CQrXcIhbQAAAAAA',
-      month:              '10',
-      year:               Time.now.year + 1,
-      source:             :apple_pay,
-      verification_value: nil)
+      month: '10',
+      year: Time.now.year + 1,
+      source: :apple_pay,
+      verification_value: nil
+    )
 
     @options = {
       order_id: '1',
       billing_address: address,
+      shipping_address: address,
       description: 'Purchase',
       email: 'longbob.longsen@example.com',
       processing_channel_id: 'pc_lxgl7aqahkzubkundd2l546hdm'
@@ -73,10 +87,7 @@ class RemoteCheckoutV2Test < Test::Unit::TestCase
       card_on_file: true,
       transaction_indicator: 2,
       previous_charge_id: 'pay_123',
-      processing_channel_id: 'pc_123',
-      marketplace: {
-        sub_entity_id: 'ent_123'
-      }
+      processing_channel_id: 'pc_123'
     )
     @additional_options_3ds = @options.merge(
       execute_threed: true,
@@ -101,6 +112,68 @@ class RemoteCheckoutV2Test < Test::Unit::TestCase
         authentication_response_status: 'Y'
       }
     )
+    @extra_customer_data = @options.merge(
+      phone_country_code: '1',
+      phone: '9108675309'
+    )
+    @payout_options = @options.merge(
+      source_type: 'currency_account',
+      source_id: 'ca_spwmped4qmqenai7hcghquqle4',
+      funds_transfer_type: 'FD',
+      instruction_purpose: 'leisure',
+      destination: {
+        account_holder: {
+          phone: {
+            number: '9108675309',
+            country_code: '1'
+          },
+          identification: {
+            type: 'passport',
+            number: '12345788848438'
+          }
+        }
+      },
+      currency: 'GBP',
+      sender: {
+        type: 'individual',
+        first_name: 'Jane',
+        middle_name: 'Middle',
+        last_name: 'Doe',
+        address: {
+          address1: '123 Main St',
+          address2: 'Apt G',
+          city: 'Narnia',
+          state: 'ME',
+          zip: '12345',
+          country: 'US'
+        },
+        reference: '012345',
+        reference_type: 'other',
+        source_of_funds: 'debit',
+          identification: {
+            type: 'passport',
+            number: 'ABC123',
+            issuing_country: 'US',
+            date_of_expiry: '2027-07-07'
+          }
+      }
+    )
+  end
+
+  def test_failed_access_token
+    assert_raises(ActiveMerchant::OAuthResponseError) do
+      gateway = CheckoutV2Gateway.new({ client_id: 'YOUR_CLIENT_ID', client_secret: 'YOUR_CLIENT_SECRET' })
+      gateway.send :setup_access_token
+    end
+  end
+
+  def test_failed_purchase_with_failed_access_token
+    error = assert_raises(ActiveMerchant::OAuthResponseError) do
+      gateway = CheckoutV2Gateway.new({ client_id: 'YOUR_CLIENT_ID', client_secret: 'YOUR_CLIENT_SECRET' })
+      gateway.purchase(@amount, @credit_card, @options)
+    end
+
+    assert_equal error.message, 'Failed with 400 Bad Request'
   end
 
   def test_transcript_scrubbing
@@ -340,6 +413,12 @@ class RemoteCheckoutV2Test < Test::Unit::TestCase
     assert_equal 'Y', response.cvv_result['code']
   end
 
+  def test_successful_purchase_with_extra_customer_data
+    response = @gateway.purchase(@amount, @credit_card, @extra_customer_data)
+    assert_success response
+    assert_equal 'Succeeded', response.message
+  end
+
   def test_successful_authorize_includes_cvv_result
     response = @gateway.authorize(@amount, @credit_card, @options)
     assert_success response
@@ -426,8 +505,22 @@ class RemoteCheckoutV2Test < Test::Unit::TestCase
     assert_equal 'Succeeded', response.message
   end
 
+  def test_successful_purchase_with_shipping_address
+    response = @gateway.purchase(@amount, @credit_card, shipping_address: address)
+    assert_success response
+    assert_equal 'Succeeded', response.message
+  end
+
   def test_successful_purchase_without_phone_number
-    response = @gateway.purchase(@amount, @credit_card, billing_address: address.update(phone: ''))
+    response = @gateway.purchase(@amount, @credit_card, billing_address: address.update(phone: nil))
+    assert_success response
+    assert_equal 'Succeeded', response.message
+  end
+
+  def test_successful_purchase_without_name
+    credit_card = credit_card('4242424242424242', verification_value: '100', month: '6', year: Time.now.year + 1, first_name: nil, last_name: nil)
+    response = @gateway.purchase(@amount, credit_card, @options)
+    assert_equal response.params['source']['name'], ''
     assert_success response
     assert_equal 'Succeeded', response.message
   end
@@ -439,9 +532,9 @@ class RemoteCheckoutV2Test < Test::Unit::TestCase
   end
 
   def test_failed_purchase
-    response = @gateway.purchase(12305, @credit_card, @options)
+    response = @gateway.purchase(100, @credit_card_dnh, @options)
     assert_failure response
-    assert_equal 'Declined - Do Not Honour', response.message
+    assert_equal 'Invalid Card Number', response.message
   end
 
   def test_failed_purchase_via_oauth
@@ -460,6 +553,12 @@ class RemoteCheckoutV2Test < Test::Unit::TestCase
     response = @gateway.authorize(@amount, @declined_card, billing_address: address.update(address1: 'Test_A'))
     assert_failure response
     assert_equal 'request_invalid: card_number_invalid', response.message
+  end
+
+  def test_invalid_shipping_address
+    response = @gateway.authorize(@amount, @credit_card, shipping_address: address.update(country: 'Canada'))
+    assert_failure response
+    assert_equal 'request_invalid: country_address_invalid', response.message
   end
 
   def test_successful_authorize_and_capture
@@ -558,9 +657,9 @@ class RemoteCheckoutV2Test < Test::Unit::TestCase
   end
 
   def test_failed_authorize
-    response = @gateway.authorize(12314, @credit_card, @options)
+    response = @gateway.authorize(12314, @declined_card, @options)
     assert_failure response
-    assert_equal 'Invalid Card Number', response.message
+    assert_equal 'request_invalid: card_number_invalid', response.message
   end
 
   def test_failed_authorize_via_oauth
@@ -591,6 +690,29 @@ class RemoteCheckoutV2Test < Test::Unit::TestCase
     @credit_card.first_name = 'John'
     @credit_card.last_name = 'Doe'
     response = @gateway_oauth.credit(@amount, @credit_card, @options.merge({ source_type: 'currency_account', source_id: 'ca_spwmped4qmqenai7hcghquqle4', account_holder_type: 'individual' }))
+    assert_success response
+    assert_equal 'Succeeded', response.message
+  end
+
+  def test_successful_money_transfer_payout_via_credit_individual_account_holder_type
+    @credit_card.first_name = 'John'
+    @credit_card.last_name = 'Doe'
+    response = @gateway_oauth.credit(@amount, @credit_card, @payout_options.merge(account_holder_type: 'individual', payout: true))
+    assert_success response
+    assert_equal 'Succeeded', response.message
+  end
+
+  def test_successful_money_transfer_payout_via_credit_corporate_account_holder_type
+    @credit_card.name = 'ACME, Inc.'
+    response = @gateway_oauth.credit(@amount, @credit_card, @payout_options.merge(account_holder_type: 'corporate'))
+    assert_success response
+    assert_equal 'Succeeded', response.message
+  end
+
+  def test_money_transfer_payout_reverts_to_credit_if_payout_sent_as_nil
+    @credit_card.first_name = 'John'
+    @credit_card.last_name = 'Doe'
+    response = @gateway_oauth.credit(@amount, @credit_card, @payout_options.merge({ account_holder_type: 'individual', payout: nil }))
     assert_success response
     assert_equal 'Succeeded', response.message
   end

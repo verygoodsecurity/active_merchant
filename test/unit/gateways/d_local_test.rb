@@ -36,6 +36,14 @@ class DLocalTest < Test::Unit::TestCase
     assert response.test?
   end
 
+  def test_purchase_with_save
+    stub_comms do
+      @gateway.purchase(@amount, @credit_card, @options.merge(save: true))
+    end.check_request do |_endpoint, data, _headers|
+      assert_equal true, JSON.parse(data)['card']['save']
+    end.respond_with(successful_purchase_response)
+  end
+
   def test_failed_purchase
     @gateway.expects(:ssl_post).returns(failed_purchase_response)
 
@@ -57,8 +65,7 @@ class DLocalTest < Test::Unit::TestCase
   end
 
   def test_purchase_with_network_tokens
-    credit_card = network_tokenization_credit_card('4242424242424242',
-      payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
+    credit_card = network_tokenization_credit_card('4242424242424242', payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
     stub_comms do
       @gateway.purchase(@amount, credit_card)
     end.check_request do |_endpoint, data, _headers|
@@ -69,8 +76,7 @@ class DLocalTest < Test::Unit::TestCase
 
   def test_purchase_with_network_tokens_and_store_credential_type_subscription
     options = @options.merge!(stored_credential: stored_credential(:merchant, :recurring, ntid: 'abc123'))
-    credit_card = network_tokenization_credit_card('4242424242424242',
-      payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
+    credit_card = network_tokenization_credit_card('4242424242424242', payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
     stub_comms do
       @gateway.purchase(@amount, credit_card, options)
     end.check_request do |_endpoint, data, _headers|
@@ -82,8 +88,7 @@ class DLocalTest < Test::Unit::TestCase
 
   def test_purchase_with_network_tokens_and_store_credential_type_uneschedule
     options = @options.merge!(stored_credential: stored_credential(:merchant, :unscheduled, ntid: 'abc123'))
-    credit_card = network_tokenization_credit_card('4242424242424242',
-      payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
+    credit_card = network_tokenization_credit_card('4242424242424242', payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
     stub_comms do
       @gateway.purchase(@amount, credit_card, options)
     end.check_request do |_endpoint, data, _headers|
@@ -95,8 +100,7 @@ class DLocalTest < Test::Unit::TestCase
 
   def test_purchase_with_network_tokens_and_store_credential_usage_first
     options = @options.merge!(stored_credential: stored_credential(:cardholder, :initial))
-    credit_card = network_tokenization_credit_card('4242424242424242',
-      payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
+    credit_card = network_tokenization_credit_card('4242424242424242', payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
     stub_comms do
       @gateway.purchase(@amount, credit_card, options)
     end.check_request do |_endpoint, data, _headers|
@@ -108,8 +112,7 @@ class DLocalTest < Test::Unit::TestCase
 
   def test_purchase_with_network_tokens_and_store_credential_type_card_on_file_and_credential_usage_used
     options = @options.merge!(stored_credential: stored_credential(:cardholder, :unscheduled, ntid: 'abc123'))
-    credit_card = network_tokenization_credit_card('4242424242424242',
-      payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
+    credit_card = network_tokenization_credit_card('4242424242424242', payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
     stub_comms do
       @gateway.purchase(@amount, credit_card, options)
     end.check_request do |_endpoint, data, _headers|
@@ -122,8 +125,7 @@ class DLocalTest < Test::Unit::TestCase
 
   def test_purchase_with_network_tokens_and_store_credential_usage
     options = @options.merge!(stored_credential: stored_credential(:cardholder, :recurring, ntid: 'abc123'))
-    credit_card = network_tokenization_credit_card('4242424242424242',
-      payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
+    credit_card = network_tokenization_credit_card('4242424242424242', payment_cryptogram: 'BwABB4JRdgAAAAAAiFF2AAAAAAA=')
     stub_comms do
       @gateway.purchase(@amount, credit_card, options)
     end.check_request do |_endpoint, data, _headers|

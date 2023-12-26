@@ -8,10 +8,7 @@ class RemoteCyberSourceRestTest < Test::Unit::TestCase
     @bank_account = check(account_number: '4100', routing_number: '121042882')
     @declined_bank_account = check(account_number: '550111', routing_number: '121107882')
 
-    @visa_card = credit_card('4111111111111111',
-      verification_value: '987',
-      month: 12,
-      year: 2031)
+    @visa_card = credit_card('4111111111111111', verification_value: '987', month: 12, year: 2031)
 
     @master_card = credit_card('2222420000001113', brand: 'master')
     @discover_card = credit_card('6011111111111117', brand: 'discover')
@@ -87,7 +84,16 @@ class RemoteCyberSourceRestTest < Test::Unit::TestCase
     @options = {
       order_id: generate_unique_id,
       currency: 'USD',
-      email: 'test@cybs.com'
+      email: 'test@cybs.com',
+      billing_address: {
+        name:     'John Doe',
+        address1: '1 Market St',
+        city:     'san francisco',
+        state:    'CA',
+        zip:      '94105',
+        country:  'US',
+        phone:    '4158880000'
+      }
     }
   end
 
@@ -150,6 +156,42 @@ class RemoteCyberSourceRestTest < Test::Unit::TestCase
 
   def test_successful_purchase
     response = @gateway.purchase(@amount, @visa_card, @options)
+    assert_success response
+    assert response.test?
+    assert_equal 'AUTHORIZED', response.message
+    assert_nil response.params['_links']['capture']
+  end
+
+  def test_successful_purchase_with_credit_card_ignore_avs
+    @options[:ignore_avs] = 'true'
+    response = @gateway.purchase(@amount, @visa_card, @options)
+    assert_success response
+    assert response.test?
+    assert_equal 'AUTHORIZED', response.message
+    assert_nil response.params['_links']['capture']
+  end
+
+  def test_successful_purchase_with_network_token_ignore_avs
+    @options[:ignore_avs] = 'true'
+    response = @gateway.purchase(@amount, @apple_pay, @options)
+    assert_success response
+    assert response.test?
+    assert_equal 'AUTHORIZED', response.message
+    assert_nil response.params['_links']['capture']
+  end
+
+  def test_successful_purchase_with_credit_card_ignore_cvv
+    @options[:ignore_cvv] = 'true'
+    response = @gateway.purchase(@amount, @visa_card, @options)
+    assert_success response
+    assert response.test?
+    assert_equal 'AUTHORIZED', response.message
+    assert_nil response.params['_links']['capture']
+  end
+
+  def test_successful_purchase_with_network_token_ignore_cvv
+    @options[:ignore_cvv] = 'true'
+    response = @gateway.purchase(@amount, @apple_pay, @options)
     assert_success response
     assert response.test?
     assert_equal 'AUTHORIZED', response.message
@@ -422,5 +464,52 @@ class RemoteCyberSourceRestTest < Test::Unit::TestCase
     assert auth = @gateway.authorize(@amount, @visa_card, options)
     assert purchase = @gateway.purchase(@amount, @visa_card, options.merge(network_transaction_id: auth.network_transaction_id))
     assert_success purchase
+  end
+
+  def test_successful_purchase_with_reconciliation_id
+    options = @options.merge(reconciliation_id: '1936831')
+    assert response = @gateway.purchase(@amount, @visa_card, options)
+    assert_success response
+  end
+
+  def test_successful_authorization_with_reconciliation_id
+    options = @options.merge(reconciliation_id: '1936831')
+    assert response = @gateway.authorize(@amount, @visa_card, options)
+    assert_success response
+    assert !response.authorization.blank?
+  end
+
+  def test_successful_verify_zero_amount
+    @options[:zero_amount_auth] = true
+    response = @gateway.verify(@visa_card, @options)
+    assert_success response
+    assert_match '0.00', response.params['orderInformation']['amountDetails']['authorizedAmount']
+    assert_equal 'AUTHORIZED', response.message
+  end
+
+  def test_successful_bank_account_purchase_with_sec_code
+    options = @options.merge(sec_code: 'WEB')
+    response = @gateway.purchase(@amount, @bank_account, options)
+    assert_success response
+    assert_equal 'PENDING', response.message
+  end
+
+  def test_successful_purchase_with_solution_id
+    ActiveMerchant::Billing::CyberSourceRestGateway.application_id = 'A1000000'
+    assert response = @gateway.purchase(@amount, @visa_card, @options)
+    assert_success response
+    assert !response.authorization.blank?
+  ensure
+    ActiveMerchant::Billing::CyberSourceGateway.application_id = nil
+  end
+
+  def test_successful_purchase_in_australian_dollars
+    @options[:currency] = 'AUD'
+    response = @gateway.purchase(@amount, @visa_card, @options)
+    assert_success response
+    assert response.test?
+    assert_equal 'AUTHORIZED', response.message
+    assert_nil response.params['_links']['capture']
+    assert_equal 'AUD', response.params['orderInformation']['amountDetails']['currency']
   end
 end
