@@ -5,6 +5,8 @@ services:
       context: .
       dockerfile: Dockerfile
     command: rake test
+    volumes:
+    - .:/active_merchant
     image: quay.io/verygoodsecurity/active_merchant:${VERSION:-latest}
 
   deploy:
